@@ -20,7 +20,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
-  
+
 <!-- Google Identity Services (login + token OAuth) -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 
@@ -32,7 +32,7 @@ const { useState, useEffect, useMemo, useRef } = React;
    ========================================================= */
 // Incolla qui il Client ID OAuth creato su Google Cloud Console
 // (Credentials > OAuth Client ID > Web application)
-const GOOGLE_CLIENT_ID = "609205488576-busghpdhkn9iq5tjug5jeagbad3k0ko5.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = "INCOLLA_QUI_IL_TUO_CLIENT_ID.apps.googleusercontent.com";
 
 // Scope minimo: l'app può leggere/scrivere SOLO i propri file,
 // in una cartella nascosta e invisibile nel Drive normale.
@@ -375,6 +375,11 @@ function GymAgent() {
   const [sessionDate, setSessionDate] = useState(todayISO());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [today, setToday] = useState({});
+  const [newExOpen, setNewExOpen] = useState(false);
+  const [newExName, setNewExName] = useState("");
+  const [newExCategory, setNewExCategory] = useState(CATEGORIES[0]);
+  const [newExType, setNewExType] = useState("weight");
+  const [newExUnit, setNewExUnit] = useState("kg");
 
   const [signedIn, setSignedIn] = useState(false);
   const [syncStatus, setSyncStatus] = useState("offline"); // offline | syncing | synced | error
@@ -462,6 +467,26 @@ function GymAgent() {
     persist({ ...data, sessions: data.sessions.filter((s) => s.id !== sessionId) });
   }
 
+  function duplicateSession(session) {
+    const newToday = {};
+    session.entries.forEach((entry) => {
+      const ex = exercisesById[entry.exerciseId];
+      if (!ex) return;
+      const sug = computeSuggestion(ex, data.sessions, data.phase);
+      if (ex.type === "weight") {
+        newToday[entry.exerciseId] = {
+          sets: entry.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
+          flag: false, note: "", suggestion: sug,
+        };
+      } else {
+        newToday[entry.exerciseId] = { note: "", flag: false, suggestion: sug };
+      }
+    });
+    setToday(newToday);
+    setSessionDate(todayISO());
+    setTab("log");
+  }
+
   function editSession(session) {
     const newToday = {};
     session.entries.forEach((entry) => {
@@ -472,7 +497,7 @@ function GymAgent() {
       if (ex.type === "weight") {
         newToday[entry.exerciseId] = {
           sets: entry.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
-          flag: entry.flag, suggestion: sug,
+          flag: entry.flag, note: entry.note || "", suggestion: sug,
         };
       } else {
         newToday[entry.exerciseId] = { note: entry.note || "", flag: entry.flag, suggestion: sug };
@@ -507,10 +532,28 @@ function GymAgent() {
     setToday((t) => ({
       ...t,
       [ex.id]: ex.type === "weight"
-        ? { sets: Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })), flag: false, suggestion: sug }
+        ? { sets: Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })), flag: false, note: "", suggestion: sug }
         : { note: "", flag: false, suggestion: sug },
     }));
     setPickerOpen(false);
+  }
+
+  function createCustomExercise() {
+    const name = newExName.trim();
+    if (!name) return;
+    const newEx = newExType === "weight"
+      ? {
+          id: "custom-" + uid(), name, category: newExCategory, type: "weight",
+          increment: 1, unit: newExUnit.trim() || "kg",
+          rangeMassa: [8, 12], rangeForza: [4, 6], defaultSets: 3,
+        }
+      : { id: "custom-" + uid(), name, category: newExCategory, type: "other" };
+    persist({ ...data, exercises: [...data.exercises, newEx] });
+    addExerciseToToday(newEx);
+    setNewExName("");
+    setNewExType("weight");
+    setNewExUnit("kg");
+    setNewExOpen(false);
   }
 
   function removeExerciseFromToday(id) {
@@ -547,6 +590,7 @@ function GymAgent() {
       if (ex.type === "weight") {
         return {
           exerciseId: exId, flag: entry.flag,
+          note: entry.note || "",
           sets: entry.sets.filter((s) => s.weight !== "" && s.reps !== "")
             .map((s) => ({ weight: parseFloat(s.weight), reps: parseInt(s.reps, 10) })),
         };
@@ -623,6 +667,32 @@ function GymAgent() {
                       </div>
                     </div>
                   ))}
+
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #26241f" }}>
+                    {!newExOpen ? (
+                      <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(true)}>➕ Nuovo esercizio personalizzato</button>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <input className="ga-input" placeholder="Nome esercizio" value={newExName} onChange={(e) => setNewExName(e.target.value)} />
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <select className="ga-input" value={newExCategory} onChange={(e) => setNewExCategory(e.target.value)}>
+                            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <select className="ga-input" value={newExType} onChange={(e) => setNewExType(e.target.value)}>
+                            <option value="weight">A peso</option>
+                            <option value="other">Libero (reps/tempo)</option>
+                          </select>
+                        </div>
+                        {newExType === "weight" && (
+                          <input className="ga-input" placeholder="Unità di misura (es. kg, lb, kg/lato)" value={newExUnit} onChange={(e) => setNewExUnit(e.target.value)} />
+                        )}
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button className="ga-btn ga-btn-accent" style={{ fontSize: 13 }} onClick={createCustomExercise}>Crea e aggiungi</button>
+                          <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(false)}>Annulla</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -662,6 +732,7 @@ function GymAgent() {
                         </div>
                       ))}
                       <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => addSetRow(exId)}>+ serie</button>
+                      <input className="ga-input" style={{ marginTop: 10 }} placeholder="Nota (facoltativa, es. sensazioni, tecnica...)" value={entry.note || ""} onChange={(e) => updateNote(exId, e.target.value)} />
                     </div>
                   ) : (
                     <div style={{ marginTop: 10 }}>
@@ -696,7 +767,10 @@ function GymAgent() {
                   {exerciseHistoryRows.map((r, i) => (
                     <tr key={i} style={{ borderBottom: "1px solid #1c1c19" }}>
                       <td style={{ padding: "6px 4px" }} className="ga-mono">{fmtDate(r.date)}</td>
-                      <td style={{ padding: "6px 4px" }} className="ga-mono">{r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ")}</td>
+                      <td style={{ padding: "6px 4px" }} className="ga-mono">
+                        {r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ")}
+                        {r.entry.note && <div style={{ color: "#D6E24B", fontStyle: "italic", fontFamily: "system-ui, sans-serif" }}>📝 {r.entry.note}</div>}
+                      </td>
                       <td>{r.entry.flag && "⚠️"}</td>
                     </tr>
                   ))}
@@ -717,14 +791,20 @@ function GymAgent() {
                         {s.entries.map((e, i) => {
                           const ex = exercisesById[e.exerciseId];
                           return (
-                            <div key={i} style={{ fontSize: 13, marginBottom: 6, display: "flex", justifyContent: "space-between" }}>
-                              <span>{ex ? ex.name : e.exerciseId} {e.flag && "⚠️"}</span>
-                              <span className="ga-mono" style={{ color: "#9a978c" }}>{ex && ex.type === "weight" ? e.sets.map((s2) => `${s2.weight}x${s2.reps}`).join(" / ") : e.note}</span>
+                            <div key={i} style={{ marginBottom: 6 }}>
+                              <div style={{ fontSize: 13, display: "flex", justifyContent: "space-between" }}>
+                                <span>{ex ? ex.name : e.exerciseId} {e.flag && "⚠️"}</span>
+                                <span className="ga-mono" style={{ color: "#9a978c" }}>{ex && ex.type === "weight" ? e.sets.map((s2) => `${s2.weight}x${s2.reps}`).join(" / ") : e.note}</span>
+                              </div>
+                              {ex && ex.type === "weight" && e.note && (
+                                <div style={{ fontSize: 12, color: "#D6E24B", marginTop: 2, fontStyle: "italic" }}>📝 {e.note}</div>
+                              )}
                             </div>
                           );
                         })}
                         <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid #26241f" }}>
                           <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => editSession(s)}>Modifica</button>
+                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => duplicateSession(s)}>📋 Duplica (oggi)</button>
                           <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", borderColor: "#E2572B", color: "#E2572B" }} onClick={() => deleteSession(s.id)}>🗑 Elimina</button>
                         </div>
                       </div>

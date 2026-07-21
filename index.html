@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#121210" />
+<title>Back to Back Gym</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<style>
+  html, body { margin: 0; padding: 0; background: #121210; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React (UMD, nessun build richiesto) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Google Identity Services (login + token OAuth) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+/* =========================================================
+   CONFIGURAZIONE — da compilare tu una volta sola
+   ========================================================= */
+// Incolla qui il Client ID OAuth creato su Google Cloud Console
+// (Credentials > OAuth Client ID > Web application)
+const GOOGLE_CLIENT_ID = "INCOLLA_QUI_IL_TUO_CLIENT_ID.apps.googleusercontent.com";
+
+// Scope minimo: l'app può leggere/scrivere SOLO i propri file,
+// in una cartella nascosta e invisibile nel Drive normale.
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+const DRIVE_FILENAME = "davide-gym-data.json";
+const LOCAL_KEY = "davide-gym-data-v1";
+
+/* =========================================================
+   DATI DI BASE (esercizi e storico "seed")
+   ========================================================= */
+const CATEGORIES = ["Petto", "Spalle", "Dorso", "Bicipiti", "Tricipiti", "Gambe", "Core"];
+
+const DEFAULT_EXERCISES = [
+  { id: "spinte-piana", name: "Spinte piana (manubri)", category: "Petto", type: "weight", increment: 1, unit: "kg", rangeMassa: [8, 12], rangeForza: [4, 6], defaultSets: 4 },
+  { id: "panca-inclinata", name: "Panca inclinata (bilanciere)", category: "Petto", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 12], rangeForza: [5, 8], defaultSets: 4 },
+  { id: "croci-cavi", name: "Croci ai cavi (alti/bassi)", category: "Petto", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 3 },
+  { id: "spinte-spalle", name: "Spinte spalle (manubri)", category: "Spalle", type: "weight", increment: 1, unit: "kg", rangeMassa: [8, 12], rangeForza: [5, 8], defaultSets: 4 },
+  { id: "alzate-laterali", name: "Alzate laterali (manubri)", category: "Spalle", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 4 },
+  { id: "alzate-posteriori", name: "Alzate posteriori (manubri)", category: "Spalle", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 3 },
+  { id: "alzate-cavi", name: "Alzate laterali ai cavi", category: "Spalle", type: "weight", increment: 0.5, unit: "kg", rangeMassa: [12, 15], rangeForza: [10, 12], defaultSets: 3 },
+  { id: "lat-machine", name: "Lat machine", category: "Dorso", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 12], rangeForza: [5, 8], defaultSets: 4 },
+  { id: "pulley-basso", name: "Pulley basso", category: "Dorso", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 12], rangeForza: [5, 8], defaultSets: 4 },
+  { id: "rematore", name: "Rematore (manubrio/bilanciere/macchina)", category: "Dorso", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 12], rangeForza: [5, 8], defaultSets: 3 },
+  { id: "t-bar", name: "T-bar", category: "Dorso", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 12], rangeForza: [5, 8], defaultSets: 3 },
+  { id: "curl-bici", name: "Curl bicipiti (manubri)", category: "Bicipiti", type: "weight", increment: 1, unit: "kg", rangeMassa: [8, 12], rangeForza: [6, 8], defaultSets: 3 },
+  { id: "curl-z", name: "Curl bilanciere Z (peso per lato)", category: "Bicipiti", type: "weight", increment: 1.25, unit: "kg/lato", rangeMassa: [8, 12], rangeForza: [6, 8], defaultSets: 3 },
+  { id: "curl-corde", name: "Curl ai cavi (corda)", category: "Bicipiti", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 3 },
+  { id: "curl-ruotati", name: "Curl ruotati (normale -> hammer)", category: "Bicipiti", type: "weight", increment: 1, unit: "kg", rangeMassa: [8, 12], rangeForza: [6, 8], defaultSets: 3 },
+  { id: "french-press", name: "French press (bilanciere Z, peso per lato)", category: "Tricipiti", type: "weight", increment: 1.25, unit: "kg/lato", rangeMassa: [8, 12], rangeForza: [6, 8], defaultSets: 3 },
+  { id: "estensioni-cavo-basso", name: "Estensioni tricipiti al cavo basso", category: "Tricipiti", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 3 },
+  { id: "push-con-corde", name: "Push con corde (cavo alto)", category: "Tricipiti", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 3 },
+  { id: "leg-press-45", name: "Leg press 45", category: "Gambe", type: "weight", increment: 5, unit: "kg", rangeMassa: [10, 12], rangeForza: [6, 8], defaultSets: 3 },
+  { id: "leg-press-orizz", name: "Leg press orizzontale", category: "Gambe", type: "weight", increment: 10, unit: "lb", rangeMassa: [10, 12], rangeForza: [6, 8], defaultSets: 3 },
+  { id: "leg-curl", name: "Leg curl (sdraiato/seduto)", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [10, 12], rangeForza: [8, 10], defaultSets: 3 },
+  { id: "stacco-rumeno", name: "Stacco rumeno (gambe tese)", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 10], rangeForza: [5, 6], defaultSets: 3 },
+  { id: "squat", name: "Squat", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 10], rangeForza: [4, 6], defaultSets: 3 },
+  { id: "calf-pressa", name: "Calf alla pressa", category: "Gambe", type: "weight", increment: 5, unit: "kg", rangeMassa: [12, 15], rangeForza: [10, 12], defaultSets: 3 },
+  { id: "abs-crunch", name: "Abs crunch", category: "Core", type: "other" },
+];
+
+const DEFAULT_SESSIONS = [
+  { id: "h01", date: "2026-05-15", entries: [
+    { exerciseId: "leg-press-orizz", flag: false, sets: [{ weight: 220, reps: 10 }, { weight: 220, reps: 10 }, { weight: 220, reps: 10 }] },
+    { exerciseId: "stacco-rumeno", flag: false, sets: [{ weight: 60, reps: 8 }, { weight: 60, reps: 8 }] },
+  ]},
+  { id: "h02", date: "2026-05-16", entries: [
+    { exerciseId: "spinte-piana", flag: false, sets: [{ weight: 22, reps: 10 }, { weight: 22, reps: 8 }, { weight: 22, reps: 8 }, { weight: 22, reps: 8 }] },
+    { exerciseId: "panca-inclinata", flag: false, sets: [{ weight: 40, reps: 8 }, { weight: 40, reps: 8 }, { weight: 40, reps: 8 }, { weight: 40, reps: 8 }] },
+    { exerciseId: "curl-ruotati", flag: false, sets: [{ weight: 14, reps: 8 }, { weight: 14, reps: 8 }, { weight: 14, reps: 8 }, { weight: 14, reps: 8 }] },
+    { exerciseId: "curl-z", flag: false, sets: [{ weight: 7.5, reps: 8 }, { weight: 7.5, reps: 8 }, { weight: 7.5, reps: 8 }, { weight: 7.5, reps: 8 }] },
+  ]},
+  { id: "h03", date: "2026-05-17", entries: [
+    { exerciseId: "lat-machine", flag: false, sets: [{ weight: 50, reps: 8 }, { weight: 50, reps: 8 }, { weight: 50, reps: 8 }, { weight: 50, reps: 8 }] },
+    { exerciseId: "pulley-basso", flag: false, sets: [{ weight: 35, reps: 10 }, { weight: 35, reps: 10 }, { weight: 35, reps: 10 }, { weight: 35, reps: 10 }] },
+    { exerciseId: "rematore", flag: false, sets: [{ weight: 12, reps: 10 }, { weight: 12, reps: 10 }, { weight: 12, reps: 10 }] },
+    { exerciseId: "french-press", flag: false, sets: [{ weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }] },
+    { exerciseId: "push-con-corde", flag: false, sets: [{ weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }] },
+  ]},
+  { id: "h04", date: "2026-05-21", entries: [
+    { exerciseId: "spinte-spalle", flag: false, sets: [{ weight: 20, reps: 8 }, { weight: 20, reps: 8 }, { weight: 20, reps: 8 }, { weight: 20, reps: 7 }] },
+    { exerciseId: "alzate-laterali", flag: false, sets: [{ weight: 8, reps: 10 }, { weight: 8, reps: 10 }, { weight: 8, reps: 10 }, { weight: 8, reps: 10 }] },
+  ]},
+  { id: "h05", date: "2026-06-05", entries: [
+    { exerciseId: "spinte-piana", flag: false, sets: [{ weight: 18, reps: 10 }, { weight: 18, reps: 10 }, { weight: 18, reps: 10 }, { weight: 18, reps: 10 }] },
+    { exerciseId: "panca-inclinata", flag: false, sets: [{ weight: 30, reps: 10 }, { weight: 30, reps: 10 }, { weight: 30, reps: 10 }, { weight: 30, reps: 10 }] },
+    { exerciseId: "croci-cavi", flag: false, sets: [{ weight: 7.5, reps: 12 }, { weight: 7.5, reps: 12 }, { weight: 7.5, reps: 12 }] },
+    { exerciseId: "curl-ruotati", flag: false, sets: [{ weight: 12, reps: 10 }, { weight: 12, reps: 10 }, { weight: 12, reps: 10 }, { weight: 12, reps: 10 }] },
+    { exerciseId: "push-con-corde", flag: false, sets: [{ weight: 12.5, reps: 15 }, { weight: 12.5, reps: 15 }, { weight: 12.5, reps: 15 }, { weight: 12.5, reps: 15 }] },
+  ]},
+  { id: "h06", date: "2026-06-07", entries: [
+    { exerciseId: "french-press", flag: false, sets: [{ weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }] },
+    { exerciseId: "push-con-corde", flag: false, sets: [{ weight: 12.5, reps: 8 }, { weight: 12.5, reps: 8 }] },
+    { exerciseId: "estensioni-cavo-basso", flag: false, sets: [{ weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }] },
+    { exerciseId: "lat-machine", flag: false, sets: [{ weight: 45, reps: 8 }, { weight: 45, reps: 8 }, { weight: 45, reps: 8 }, { weight: 45, reps: 8 }] },
+    { exerciseId: "rematore", flag: false, sets: [{ weight: 32, reps: 10 }, { weight: 32, reps: 10 }, { weight: 32, reps: 10 }, { weight: 32, reps: 10 }] },
+  ]},
+  { id: "h07", date: "2026-06-10", entries: [
+    { exerciseId: "leg-press-orizz", flag: false, sets: [{ weight: 180, reps: 10 }, { weight: 180, reps: 10 }, { weight: 180, reps: 10 }, { weight: 180, reps: 10 }] },
+    { exerciseId: "stacco-rumeno", flag: false, sets: [{ weight: 40, reps: 10 }, { weight: 40, reps: 10 }, { weight: 40, reps: 10 }, { weight: 40, reps: 10 }] },
+    { exerciseId: "spinte-spalle", flag: false, sets: [{ weight: 20, reps: 8 }, { weight: 20, reps: 8 }, { weight: 20, reps: 7 }, { weight: 20, reps: 6 }] },
+    { exerciseId: "alzate-laterali", flag: false, sets: [{ weight: 8, reps: 10 }, { weight: 8, reps: 10 }, { weight: 8, reps: 10 }, { weight: 8, reps: 10 }] },
+    { exerciseId: "abs-crunch", flag: false, note: "4x15" },
+  ]},
+  { id: "h08", date: "2026-06-13", entries: [
+    { exerciseId: "spinte-piana", flag: false, sets: [{ weight: 20, reps: 10 }, { weight: 20, reps: 10 }, { weight: 20, reps: 10 }, { weight: 20, reps: 10 }] },
+    { exerciseId: "panca-inclinata", flag: false, sets: [{ weight: 30, reps: 10 }, { weight: 30, reps: 10 }, { weight: 30, reps: 10 }, { weight: 30, reps: 10 }] },
+    { exerciseId: "croci-cavi", flag: false, sets: [{ weight: 45, reps: 10 }, { weight: 45, reps: 10 }, { weight: 45, reps: 10 }, { weight: 45, reps: 10 }] },
+    { exerciseId: "curl-z", flag: false, sets: [{ weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }] },
+    { exerciseId: "curl-corde", flag: false, sets: [{ weight: 15, reps: 15 }, { weight: 15, reps: 15 }, { weight: 15, reps: 15 }, { weight: 15, reps: 15 }] },
+  ]},
+  { id: "h09", date: "2026-06-16", entries: [
+    { exerciseId: "lat-machine", flag: false, sets: [{ weight: 50, reps: 10 }, { weight: 50, reps: 10 }, { weight: 50, reps: 10 }, { weight: 50, reps: 10 }] },
+    { exerciseId: "pulley-basso", flag: false, sets: [{ weight: 30, reps: 10 }, { weight: 30, reps: 10 }, { weight: 30, reps: 10 }, { weight: 30, reps: 10 }] },
+    { exerciseId: "t-bar", flag: false, sets: [{ weight: 30, reps: 10 }, { weight: 30, reps: 10 }, { weight: 30, reps: 10 }] },
+    { exerciseId: "estensioni-cavo-basso", flag: false, sets: [{ weight: 12.5, reps: 10 }, { weight: 15, reps: 10 }] },
+  ]},
+  { id: "h10", date: "2026-06-19", entries: [
+    { exerciseId: "spinte-spalle", flag: false, sets: [{ weight: 22, reps: 8 }, { weight: 22, reps: 6 }, { weight: 22, reps: 6 }, { weight: 22, reps: 6 }] },
+    { exerciseId: "alzate-laterali", flag: false, sets: [{ weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }] },
+    { exerciseId: "alzate-cavi", flag: false, sets: [{ weight: 2.5, reps: 10 }, { weight: 2.5, reps: 10 }, { weight: 2.5, reps: 10 }] },
+    { exerciseId: "squat", flag: false, sets: [{ weight: 60, reps: 10 }, { weight: 60, reps: 10 }, { weight: 60, reps: 10 }] },
+    { exerciseId: "leg-curl", flag: false, sets: [{ weight: 40, reps: 10 }, { weight: 40, reps: 10 }, { weight: 40, reps: 10 }] },
+    { exerciseId: "calf-pressa", flag: false, sets: [{ weight: 73, reps: 12 }, { weight: 73, reps: 12 }, { weight: 73, reps: 12 }] },
+  ]},
+  { id: "h11", date: "2026-06-20", entries: [
+    { exerciseId: "spinte-piana", flag: false, sets: [{ weight: 24, reps: 8 }, { weight: 24, reps: 8 }, { weight: 24, reps: 7 }, { weight: 24, reps: 7 }] },
+    { exerciseId: "panca-inclinata", flag: false, sets: [{ weight: 40, reps: 8 }, { weight: 40, reps: 8 }, { weight: 40, reps: 8 }, { weight: 40, reps: 8 }] },
+    { exerciseId: "croci-cavi", flag: false, sets: [{ weight: 7.5, reps: 12 }, { weight: 8.5, reps: 12 }, { weight: 8.5, reps: 12 }] },
+    { exerciseId: "curl-z", flag: false, sets: [{ weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }] },
+    { exerciseId: "curl-corde", flag: false, sets: [{ weight: 17.5, reps: 10 }, { weight: 17.5, reps: 10 }, { weight: 17.5, reps: 10 }, { weight: 17.5, reps: 10 }] },
+    { exerciseId: "abs-crunch", flag: false, note: "4x15" },
+  ]},
+  { id: "h12", date: "2026-06-23", entries: [
+    { exerciseId: "lat-machine", flag: false, sets: [{ weight: 50, reps: 8 }, { weight: 60, reps: 4 }] },
+    { exerciseId: "pulley-basso", flag: false, sets: [{ weight: 35, reps: 10 }, { weight: 35, reps: 10 }, { weight: 35, reps: 10 }, { weight: 35, reps: 10 }] },
+    { exerciseId: "rematore", flag: false, sets: [{ weight: 20, reps: 10 }, { weight: 20, reps: 10 }, { weight: 20, reps: 10 }, { weight: 20, reps: 10 }] },
+    { exerciseId: "french-press", flag: false, sets: [{ weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }, { weight: 7.5, reps: 10 }] },
+    { exerciseId: "estensioni-cavo-basso", flag: false, sets: [{ weight: 15, reps: 10 }, { weight: 15, reps: 10 }, { weight: 15, reps: 10 }] },
+    { exerciseId: "push-con-corde", flag: false, sets: [{ weight: 12.5, reps: 10 }, { weight: 12.5, reps: 10 }, { weight: 12.5, reps: 10 }] },
+  ]},
+  { id: "h13", date: "2026-06-26", entries: [
+    { exerciseId: "leg-press-orizz", flag: false, sets: [{ weight: 200, reps: 10 }, { weight: 200, reps: 10 }, { weight: 200, reps: 10 }, { weight: 200, reps: 10 }] },
+    { exerciseId: "stacco-rumeno", flag: false, sets: [{ weight: 60, reps: 8 }, { weight: 60, reps: 8 }, { weight: 60, reps: 8 }, { weight: 60, reps: 8 }] },
+    { exerciseId: "calf-pressa", flag: false, sets: [{ weight: 82, reps: 10 }, { weight: 82, reps: 10 }, { weight: 82, reps: 10 }] },
+    { exerciseId: "spinte-spalle", flag: false, sets: [{ weight: 18, reps: 10 }, { weight: 18, reps: 10 }, { weight: 18, reps: 10 }, { weight: 18, reps: 10 }] },
+    { exerciseId: "alzate-laterali", flag: false, sets: [{ weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 6, reps: 10 }, { weight: 6, reps: 10 }] },
+    { exerciseId: "alzate-posteriori", flag: false, sets: [{ weight: 8, reps: 12 }, { weight: 8, reps: 12 }, { weight: 8, reps: 12 }] },
+  ]},
+  { id: "h14", date: "2026-06-27", entries: [
+    { exerciseId: "spinte-piana", flag: false, sets: [{ weight: 24, reps: 8 }, { weight: 24, reps: 8 }, { weight: 24, reps: 8 }, { weight: 24, reps: 8 }] },
+    { exerciseId: "panca-inclinata", flag: false, sets: [{ weight: 50, reps: 5 }, { weight: 50, reps: 5 }, { weight: 50, reps: 5 }] },
+    { exerciseId: "croci-cavi", flag: false, sets: [{ weight: 8.5, reps: 12 }, { weight: 8.5, reps: 12 }, { weight: 8.5, reps: 12 }] },
+    { exerciseId: "curl-z", flag: false, sets: [{ weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }] },
+    { exerciseId: "curl-corde", flag: false, sets: [{ weight: 17.5, reps: 12 }, { weight: 17.5, reps: 12 }, { weight: 17.5, reps: 12 }] },
+    { exerciseId: "abs-crunch", flag: false, note: "3x15" },
+  ]},
+  { id: "h15", date: "2026-06-30", entries: [
+    { exerciseId: "lat-machine", flag: false, sets: [{ weight: 50, reps: 10 }, { weight: 50, reps: 10 }, { weight: 50, reps: 10 }, { weight: 50, reps: 10 }] },
+    { exerciseId: "pulley-basso", flag: false, sets: [{ weight: 45, reps: 10 }, { weight: 45, reps: 10 }, { weight: 45, reps: 10 }] },
+    { exerciseId: "rematore", flag: false, sets: [{ weight: 24, reps: 10 }, { weight: 24, reps: 10 }, { weight: 24, reps: 10 }, { weight: 24, reps: 10 }] },
+    { exerciseId: "french-press", flag: false, sets: [{ weight: 8.75, reps: 8 }, { weight: 8.75, reps: 8 }, { weight: 8.75, reps: 8 }] },
+    { exerciseId: "estensioni-cavo-basso", flag: false, sets: [{ weight: 15, reps: 10 }, { weight: 15, reps: 10 }, { weight: 15, reps: 8 }, { weight: 15, reps: 7 }] },
+    { exerciseId: "push-con-corde", flag: false, sets: [{ weight: 12.5, reps: 10 }, { weight: 12.5, reps: 10 }] },
+  ]},
+  { id: "h16", date: "2026-07-02", entries: [
+    { exerciseId: "spinte-spalle", flag: false, sets: [{ weight: 22, reps: 8 }, { weight: 22, reps: 7 }, { weight: 22, reps: 7 }, { weight: 22, reps: 7 }] },
+    { exerciseId: "alzate-laterali", flag: false, sets: [{ weight: 8, reps: 10 }, { weight: 8, reps: 10 }, { weight: 8, reps: 10 }, { weight: 8, reps: 10 }] },
+    { exerciseId: "alzate-posteriori", flag: false, sets: [{ weight: 6, reps: 15 }, { weight: 6, reps: 15 }, { weight: 6, reps: 15 }, { weight: 6, reps: 15 }] },
+    { exerciseId: "leg-press-45", flag: false, sets: [{ weight: 160, reps: 10 }, { weight: 160, reps: 10 }, { weight: 160, reps: 10 }, { weight: 160, reps: 10 }] },
+    { exerciseId: "leg-curl", flag: false, sets: [{ weight: 45, reps: 8 }, { weight: 45, reps: 8 }, { weight: 45, reps: 8 }, { weight: 45, reps: 8 }] },
+    { exerciseId: "calf-pressa", flag: false, sets: [{ weight: 82, reps: 12 }, { weight: 82, reps: 12 }, { weight: 82, reps: 12 }] },
+  ]},
+  { id: "h17", date: "2026-07-09", entries: [
+    { exerciseId: "spinte-piana", flag: false, sets: [{ weight: 24, reps: 9 }, { weight: 24, reps: 9 }, { weight: 24, reps: 9 }, { weight: 24, reps: 8 }] },
+    { exerciseId: "panca-inclinata", flag: false, sets: [{ weight: 40, reps: 8 }, { weight: 40, reps: 8 }, { weight: 40, reps: 8 }, { weight: 40, reps: 8 }] },
+    { exerciseId: "estensioni-cavo-basso", flag: false, sets: [{ weight: 5, reps: 12 }, { weight: 5, reps: 12 }, { weight: 5, reps: 12 }] },
+    { exerciseId: "curl-z", flag: false, sets: [{ weight: 10, reps: 8 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }] },
+    { exerciseId: "curl-bici", flag: false, sets: [{ weight: 8, reps: 10 }, { weight: 8, reps: 10 }, { weight: 8, reps: 10 }] },
+  ]},
+  { id: "h18", date: "2026-07-10", entries: [
+    { exerciseId: "lat-machine", flag: false, sets: [{ weight: 55, reps: 8 }, { weight: 55, reps: 8 }, { weight: 55, reps: 8 }, { weight: 55, reps: 8 }] },
+    { exerciseId: "pulley-basso", flag: false, sets: [{ weight: 35, reps: 10 }, { weight: 35, reps: 10 }, { weight: 35, reps: 10 }, { weight: 35, reps: 10 }] },
+    { exerciseId: "rematore", flag: false, sets: [{ weight: 20, reps: 10 }, { weight: 20, reps: 10 }, { weight: 20, reps: 10 }] },
+    { exerciseId: "french-press", flag: false, sets: [{ weight: 7.5, reps: 10 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }] },
+    { exerciseId: "estensioni-cavo-basso", flag: false, sets: [{ weight: 15, reps: 10 }, { weight: 15, reps: 10 }, { weight: 15, reps: 8 }, { weight: 15, reps: 8 }] },
+    { exerciseId: "push-con-corde", flag: false, sets: [{ weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }] },
+  ]},
+  { id: "h19", date: "2026-07-15", entries: [
+    { exerciseId: "alzate-laterali", flag: false, sets: [{ weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }, { weight: 10, reps: 10 }] },
+    { exerciseId: "alzate-posteriori", flag: false, sets: [{ weight: 8, reps: 12 }, { weight: 8, reps: 12 }, { weight: 8, reps: 12 }, { weight: 8, reps: 12 }] },
+    { exerciseId: "leg-press-45", flag: false, sets: [{ weight: 160, reps: 10 }, { weight: 160, reps: 10 }, { weight: 160, reps: 10 }, { weight: 160, reps: 10 }] },
+    { exerciseId: "leg-curl", flag: false, sets: [{ weight: 45, reps: 10 }, { weight: 45, reps: 10 }, { weight: 45, reps: 10 }, { weight: 45, reps: 10 }] },
+    { exerciseId: "calf-pressa", flag: false, sets: [{ weight: 82, reps: 12 }, { weight: 82, reps: 12 }, { weight: 82, reps: 12 }] },
+  ]},
+  { id: "h20", date: "2026-07-17", entries: [
+    { exerciseId: "spinte-piana", flag: false, sets: [{ weight: 26, reps: 7 }, { weight: 26, reps: 7 }, { weight: 26, reps: 7 }, { weight: 26, reps: 7 }] },
+    { exerciseId: "panca-inclinata", flag: false, sets: [{ weight: 50, reps: 6 }, { weight: 50, reps: 6 }, { weight: 50, reps: 6 }, { weight: 50, reps: 6 }] },
+    { exerciseId: "croci-cavi", flag: false, sets: [{ weight: 9.5, reps: 12 }, { weight: 9.5, reps: 12 }] },
+    { exerciseId: "curl-z", flag: false, sets: [{ weight: 10, reps: 8 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }] },
+  ]},
+  { id: "h21", date: "2026-07-19", entries: [
+    { exerciseId: "lat-machine", flag: false, sets: [{ weight: 60, reps: 5 }, { weight: 50, reps: 5 }, { weight: 60, reps: 5 }, { weight: 50, reps: 5 }, { weight: 60, reps: 5 }, { weight: 50, reps: 5 }, { weight: 60, reps: 5 }, { weight: 50, reps: 5 }] },
+    { exerciseId: "pulley-basso", flag: false, sets: [{ weight: 40, reps: 10 }, { weight: 40, reps: 10 }, { weight: 40, reps: 10 }, { weight: 40, reps: 10 }] },
+    { exerciseId: "rematore", flag: false, sets: [{ weight: 22, reps: 12 }, { weight: 22, reps: 12 }, { weight: 22, reps: 12 }] },
+    { exerciseId: "french-press", flag: false, sets: [{ weight: 10, reps: 8 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }, { weight: 10, reps: 8 }] },
+    { exerciseId: "push-con-corde", flag: false, sets: [{ weight: 12.5, reps: 10 }, { weight: 12.5, reps: 10 }, { weight: 12.5, reps: 10 }, { weight: 12.5, reps: 10 }] },
+    { exerciseId: "estensioni-cavo-basso", flag: false, sets: [{ weight: 12.5, reps: 10 }, { weight: 12.5, reps: 8 }, { weight: 12.5, reps: 8 }] },
+  ]},
+]; // storico inserito come sessioni normali: nessun flag "seed", modificabili ed eliminabili come le altre
+
+function uid() { return Math.random().toString(36).slice(2, 10); }
+function round(n) { return Math.round(n * 2) / 2; }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function fmtDate(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+function fmtDateTime(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? `oggi alle ${time}` : `${d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit" })} alle ${time}`;
+}
+
+function computeSuggestion(exercise, sessions, phase) {
+  if (exercise.type !== "weight") {
+    return { text: "Confronta con l'ultima volta e prova a migliorare leggermente (peso, ripetizioni o tempo).", weight: null, reps: null };
+  }
+  const range = phase === "massa" ? exercise.rangeMassa : exercise.rangeForza;
+  const history = sessions
+    .filter((s) => s.entries.some((e) => e.exerciseId === exercise.id))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  if (history.length === 0) {
+    return { text: `Prima volta: scegli un peso con cui arrivi a ${range[0]}-${range[1]} ripetizioni per ${exercise.defaultSets || 3} serie.`, weight: null, reps: range[0], sets: exercise.defaultSets || 3 };
+  }
+  const last = history[0].entries.find((e) => e.exerciseId === exercise.id);
+  const workingWeight = Math.max(...last.sets.map((s) => s.weight));
+  const setsAtWeight = last.sets.filter((s) => s.weight === workingWeight);
+  const allTop = setsAtWeight.length > 0 && setsAtWeight.every((s) => s.reps >= range[1]);
+
+  if (last.flag) {
+    return { text: `L'ultima volta avevi segnalato fastidio/infortunio. Riparti con cautela: stesso peso (${workingWeight}${exercise.unit}), punta a ${range[0]} reps.`, weight: workingWeight, reps: range[0], sets: last.sets.length };
+  }
+  if (allTop) {
+    const newWeight = round(workingWeight + exercise.increment);
+    return { text: `Hai raggiunto il top del range (${range[1]} reps): sali a ${newWeight}${exercise.unit} e riparti da ${range[0]} reps.`, weight: newWeight, reps: range[0], sets: last.sets.length };
+  }
+  const second = history[1] && history[1].entries.find((e) => e.exerciseId === exercise.id);
+  if (second) {
+    const secondWeight = Math.max(...second.sets.map((s) => s.weight));
+    const secondSetsAtWeight = second.sets.filter((s) => s.weight === secondWeight);
+    const lastTotal = setsAtWeight.reduce((a, s) => a + s.reps, 0);
+    const secondTotal = secondSetsAtWeight.reduce((a, s) => a + s.reps, 0);
+    if (secondWeight === workingWeight && lastTotal <= secondTotal) {
+      const deloadWeight = round(workingWeight * 0.9);
+      return { text: `Nessun progresso nelle ultime 2 sessioni a ${workingWeight}${exercise.unit}: scarico a ${deloadWeight}${exercise.unit}.`, weight: deloadWeight, reps: range[0], sets: last.sets.length };
+    }
+  }
+  const maxRepsLast = Math.max(...setsAtWeight.map((s) => s.reps));
+  const targetReps = Math.min(maxRepsLast + 1, range[1]);
+  return { text: `Resta a ${workingWeight}${exercise.unit}: prova ad arrivare a ${targetReps} reps (range ${range[0]}-${range[1]}).`, weight: workingWeight, reps: targetReps, sets: last.sets.length };
+}
+
+/* =========================================================
+   STORAGE LOCALE (sempre attivo, offline-first)
+   ========================================================= */
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem(LOCAL_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return { phase: "massa", exercises: DEFAULT_EXERCISES, sessions: DEFAULT_SESSIONS, updatedAt: 0 };
+}
+function saveLocal(data) {
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(data)); } catch (e) {}
+}
+
+/* =========================================================
+   GOOGLE DRIVE SYNC (cartella nascosta appDataFolder)
+   ========================================================= */
+let tokenClient = null;
+let currentToken = null;
+
+function ensureTokenClient(onToken) {
+  if (tokenClient || !window.google) return;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: (resp) => {
+      if (resp && resp.access_token) {
+        currentToken = resp.access_token;
+        onToken(resp.access_token);
+      }
+    },
+  });
+}
+
+function requestSignIn() {
+  if (tokenClient) tokenClient.requestAccessToken({ prompt: "consent" });
+}
+function requestSilentToken() {
+  if (tokenClient) tokenClient.requestAccessToken({ prompt: "" });
+}
+
+async function driveFindFileId(token) {
+  const q = encodeURIComponent(`name='${DRIVE_FILENAME}'`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name)`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("drive list failed");
+  const json = await res.json();
+  return (json.files && json.files[0]) ? json.files[0].id : null;
+}
+
+async function driveCreateFile(token, contentStr) {
+  const metadata = { name: DRIVE_FILENAME, parents: ["appDataFolder"] };
+  const boundary = "gymapp_boundary_xyz";
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${contentStr}\r\n--${boundary}--`;
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  if (!res.ok) throw new Error("drive create failed");
+  const json = await res.json();
+  return json.id;
+}
+
+async function driveUpdateFile(token, fileId, contentStr) {
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: contentStr,
+  });
+  if (!res.ok) throw new Error("drive update failed");
+}
+
+async function driveGetContent(token, fileId) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("drive get failed");
+  return await res.text();
+}
+
+/* =========================================================
+   APP
+   ========================================================= */
+function GymAgent() {
+  const [data, setData] = useState(() => loadLocal());
+  const [tab, setTab] = useState("log");
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState("");
+  const [expandedSession, setExpandedSession] = useState(null);
+  const [expandedExercise, setExpandedExercise] = useState(null);
+  const [sessionDate, setSessionDate] = useState(todayISO());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [today, setToday] = useState({});
+
+  const [signedIn, setSignedIn] = useState(false);
+  const [syncStatus, setSyncStatus] = useState("offline"); // offline | syncing | synced | error
+  const [driveFileId, setDriveFileId] = useState(null);
+  const [exportText, setExportText] = useState(null);
+  const [importText, setImportText] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const [importMsg, setImportMsg] = useState(null);
+
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
+  /* --- init Google auth appena lo script GIS è pronto --- */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (window.google && window.google.accounts) {
+        ensureTokenClient(handleNewToken);
+        requestSilentToken(); // tenta login silenzioso se già autorizzato prima
+        clearInterval(interval);
+      }
+    }, 300);
+    return () => clearInterval(interval);
+  }, []);
+
+  async function handleNewToken(token) {
+    setSignedIn(true);
+    setSyncStatus("syncing");
+    try {
+      let fileId = driveFileId || await driveFindFileId(token);
+      if (!fileId) {
+        fileId = await driveCreateFile(token, JSON.stringify(dataRef.current));
+        setDriveFileId(fileId);
+        setSyncStatus("synced");
+        return;
+      }
+      setDriveFileId(fileId);
+      const remoteStr = await driveGetContent(token, fileId);
+      const remote = JSON.parse(remoteStr);
+      const local = dataRef.current;
+      // last-write-wins in base a updatedAt
+      if ((remote.updatedAt || 0) > (local.updatedAt || 0)) {
+        setData(remote);
+        saveLocal(remote);
+      } else if ((local.updatedAt || 0) > (remote.updatedAt || 0)) {
+        await driveUpdateFile(token, fileId, JSON.stringify(local));
+      }
+      setSyncStatus("synced");
+    } catch (e) {
+      setSyncStatus("error");
+    }
+  }
+
+  function persist(next) {
+    const stamped = { ...next, updatedAt: Date.now() };
+    setData(stamped);
+    saveLocal(stamped);
+    if (currentToken && driveFileId) {
+      setSyncStatus("syncing");
+      driveUpdateFile(currentToken, driveFileId, JSON.stringify(stamped))
+        .then(() => setSyncStatus("synced"))
+        .catch(() => setSyncStatus("error"));
+    } else if (signedIn) {
+      // token forse scaduto, prova refresh silenzioso
+      requestSilentToken();
+    }
+  }
+
+  const sortedSessions = [...data.sessions].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const exercisesById = Object.fromEntries(data.exercises.map((e) => [e.id, e]));
+
+  const exerciseHistoryRows = useMemo(() => {
+    if (!historyFilter) return [];
+    return sortedSessions
+      .filter((s) => s.entries.some((e) => e.exerciseId === historyFilter))
+      .map((s) => ({ date: s.date, entry: s.entries.find((e) => e.exerciseId === historyFilter) }));
+  }, [historyFilter, data]);
+
+  function getExerciseHistoryRows(exerciseId) {
+    return sortedSessions
+      .filter((s) => s.entries.some((e) => e.exerciseId === exerciseId))
+      .map((s) => ({ date: s.date, entry: s.entries.find((e) => e.exerciseId === exerciseId) }));
+  }
+
+  function deleteSession(sessionId) {
+    persist({ ...data, sessions: data.sessions.filter((s) => s.id !== sessionId) });
+  }
+
+  function editSession(session) {
+    const newToday = {};
+    session.entries.forEach((entry) => {
+      const ex = exercisesById[entry.exerciseId];
+      if (!ex) return;
+      const remaining = data.sessions.filter((s) => s.id !== session.id);
+      const sug = computeSuggestion(ex, remaining, data.phase);
+      if (ex.type === "weight") {
+        newToday[entry.exerciseId] = {
+          sets: entry.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
+          flag: entry.flag, suggestion: sug,
+        };
+      } else {
+        newToday[entry.exerciseId] = { note: entry.note || "", flag: entry.flag, suggestion: sug };
+      }
+    });
+    setToday(newToday);
+    setSessionDate(session.date);
+    deleteSession(session.id);
+    setTab("log");
+  }
+
+  function importFromText() {
+    setImportMsg(null);
+    try {
+      const parsed = JSON.parse(importText.trim());
+      if (!parsed || !Array.isArray(parsed.sessions) || !Array.isArray(parsed.exercises)) {
+        setImportMsg("Formato non valido.");
+        return;
+      }
+      persist(parsed);
+      setImportMsg("Importazione riuscita: " + parsed.sessions.length + " sessioni caricate.");
+      setImportText("");
+      setShowImport(false);
+    } catch (e) {
+      setImportMsg("Testo non riconosciuto.");
+    }
+  }
+
+  function addExerciseToToday(ex) {
+    const sug = computeSuggestion(ex, data.sessions, data.phase);
+    const nSets = sug.sets || ex.defaultSets || 3;
+    setToday((t) => ({
+      ...t,
+      [ex.id]: ex.type === "weight"
+        ? { sets: Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })), flag: false, suggestion: sug }
+        : { note: "", flag: false, suggestion: sug },
+    }));
+    setPickerOpen(false);
+  }
+
+  function removeExerciseFromToday(id) {
+    setToday((t) => { const n = { ...t }; delete n[id]; return n; });
+  }
+  function updateSet(exId, idx, field, val) {
+    setToday((t) => {
+      const entry = { ...t[exId] };
+      const sets = entry.sets.slice();
+      sets[idx] = { ...sets[idx], [field]: val };
+      entry.sets = sets;
+      return { ...t, [exId]: entry };
+    });
+  }
+  function addSetRow(exId) {
+    setToday((t) => { const entry = { ...t[exId] }; entry.sets = [...entry.sets, { weight: "", reps: "" }]; return { ...t, [exId]: entry }; });
+  }
+  function removeSetRow(exId, idx) {
+    setToday((t) => { const entry = { ...t[exId] }; entry.sets = entry.sets.filter((_, i) => i !== idx); return { ...t, [exId]: entry }; });
+  }
+  function toggleFlag(exId) {
+    setToday((t) => ({ ...t, [exId]: { ...t[exId], flag: !t[exId].flag } }));
+  }
+  function updateNote(exId, val) {
+    setToday((t) => ({ ...t, [exId]: { ...t[exId], note: val } }));
+  }
+
+  function saveSession() {
+    const ids = Object.keys(today);
+    if (ids.length === 0) return;
+    const entries = ids.map((exId) => {
+      const ex = exercisesById[exId];
+      const entry = today[exId];
+      if (ex.type === "weight") {
+        return {
+          exerciseId: exId, flag: entry.flag,
+          sets: entry.sets.filter((s) => s.weight !== "" && s.reps !== "")
+            .map((s) => ({ weight: parseFloat(s.weight), reps: parseInt(s.reps, 10) })),
+        };
+      }
+      return { exerciseId: exId, flag: entry.flag, note: entry.note };
+    });
+    const session = { id: uid(), date: sessionDate, entries };
+    persist({ ...data, sessions: [...data.sessions, session] });
+    setToday({});
+    setSessionDate(todayISO());
+    setTab("history");
+  }
+
+  const groupedLibrary = CATEGORIES.map((cat) => ({ cat, items: data.exercises.filter((e) => e.category === cat) }));
+
+  const syncLabel = {
+    offline: "non collegato a Google",
+    syncing: "sincronizzazione...",
+    synced: "sincronizzato con Drive",
+    error: "errore di sincronizzazione",
+  }[syncStatus];
+  const syncColor = { offline: "#9a978c", syncing: "#D6E24B", synced: "#7FBF7F", error: "#E2572B" }[syncStatus];
+
+  return (
+    <div style={{ fontFamily: "system-ui, sans-serif", background: "#121210", color: "#EDEAE0", minHeight: "100vh", padding: "0 0 40px 0" }}>
+      <style>{`
+        .ga-mono { font-family: 'JetBrains Mono', monospace, monospace; }
+        .ga-input { background:#1c1c19; border:1px solid #33312a; color:#EDEAE0; border-radius:6px; padding:6px 8px; font-family: monospace; font-size:14px; width:100%; box-sizing:border-box; }
+        .ga-input:focus { outline:none; border-color:#D6E24B; }
+        .ga-btn { background:transparent; border:1px solid #33312a; color:#EDEAE0; border-radius:6px; padding:8px 14px; cursor:pointer; font-size:14px; display:inline-flex; align-items:center; gap:6px; }
+        .ga-btn:hover { border-color:#D6E24B; background:#1c1c19; }
+        .ga-btn-accent { background:#D6E24B; color:#1a1a12; border-color:#D6E24B; font-weight:600; }
+        .ga-chip { border:1px solid #33312a; border-radius:999px; padding:5px 12px; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; background:#1c1c19; }
+        .ga-chip:hover { border-color:#D6E24B; }
+        .ga-tab { background:transparent; border:none; color:#9a978c; padding:10px 12px; cursor:pointer; display:flex; align-items:center; gap:6px; font-size:13px; border-bottom:2px solid transparent; }
+        .ga-tab.active { color:#D6E24B; border-bottom:2px solid #D6E24B; }
+      `}</style>
+
+      <div style={{ padding: "20px 20px 0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 24, fontWeight: 700, letterSpacing: "0.02em" }}>🏋️ BACK TO BACK GYM</span>
+        </div>
+        <span style={{ fontSize: 11, color: syncColor, display: "flex", alignItems: "center", gap: 6 }}>
+          ● {syncLabel}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 4, padding: "14px 20px 0 20px", borderBottom: "1px solid #26241f", marginTop: 12, overflowX: "auto" }}>
+        <button className={`ga-tab ${tab === "log" ? "active" : ""}`} onClick={() => setTab("log")}>📋 Oggi</button>
+        <button className={`ga-tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>🕒 Storico</button>
+        <button className={`ga-tab ${tab === "library" ? "active" : ""}`} onClick={() => setTab("library")}>📚 Esercizi</button>
+        <button className={`ga-tab ${tab === "settings" ? "active" : ""}`} onClick={() => setTab("settings")}>⚙️ Impostazioni</button>
+      </div>
+
+      <div style={{ padding: 20, maxWidth: 720, margin: "0 auto" }}>
+        {tab === "log" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <span style={{ fontSize: 13, color: "#9a978c" }}>Data allenamento</span>
+              <input type="date" className="ga-input" style={{ width: 160 }} value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <button className="ga-btn" onClick={() => setPickerOpen((v) => !v)}>➕ Aggiungi esercizio {pickerOpen ? "▲" : "▼"}</button>
+              {pickerOpen && (
+                <div style={{ marginTop: 12, background: "#1c1c19", border: "1px solid #26241f", borderRadius: 8, padding: 14 }}>
+                  {groupedLibrary.map((g) => (
+                    <div key={g.cat} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", color: "#9a978c", marginBottom: 6 }}>{g.cat}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {g.items.map((ex) => (
+                          <span key={ex.id} className="ga-chip" onClick={() => addExerciseToToday(ex)} style={today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}}>{ex.name}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {Object.keys(today).length === 0 && (
+              <div style={{ color: "#9a978c", fontSize: 14, padding: "20px 0" }}>Nessun esercizio selezionato.</div>
+            )}
+
+            {Object.keys(today).map((exId) => {
+              const ex = exercisesById[exId];
+              const entry = today[exId];
+              return (
+                <div key={exId} style={{ background: "#1c1c19", border: "1px solid #26241f", borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>{ex.name}</div>
+                      <div style={{ fontSize: 12, color: "#D6E24B", marginTop: 4 }}>{entry.suggestion?.text}</div>
+                    </div>
+                    <button className="ga-btn" style={{ padding: "6px 8px" }} onClick={() => removeExerciseFromToday(exId)}>✕</button>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <label style={{ fontSize: 12, color: "#9a978c", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input type="checkbox" checked={entry.flag} onChange={() => toggleFlag(exId)} /> ⚠️ fastidio / infortunio
+                    </label>
+                  </div>
+                  {ex.type === "weight" ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "24px 1fr 1fr 24px", gap: 8, fontSize: 11, color: "#9a978c", marginBottom: 4 }}>
+                        <span></span><span>Peso ({ex.unit})</span><span>Reps</span><span></span>
+                      </div>
+                      {entry.sets.map((s, i) => (
+                        <div key={i} style={{ display: "grid", gridTemplateColumns: "24px 1fr 1fr 24px", gap: 8, marginBottom: 6, alignItems: "center" }}>
+                          <span className="ga-mono" style={{ color: "#9a978c", fontSize: 13 }}>{i + 1}</span>
+                          <input className="ga-input" type="number" step="0.5" value={s.weight} onChange={(e) => updateSet(exId, i, "weight", e.target.value)} />
+                          <input className="ga-input" type="number" value={s.reps} onChange={(e) => updateSet(exId, i, "reps", e.target.value)} />
+                          <button className="ga-btn" style={{ padding: "4px 6px" }} onClick={() => removeSetRow(exId, i)}>🗑</button>
+                        </div>
+                      ))}
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => addSetRow(exId)}>+ serie</button>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 10 }}>
+                      <input className="ga-input" placeholder="es. 3x15, oppure 2 min" value={entry.note} onChange={(e) => updateNote(exId, e.target.value)} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {Object.keys(today).length > 0 && (
+              <button className="ga-btn ga-btn-accent" onClick={saveSession} style={{ marginTop: 8 }}>💾 Salva allenamento</button>
+            )}
+          </div>
+        )}
+
+        {tab === "history" && (
+          <div>
+            <div style={{ marginBottom: 16 }}>
+              <span style={{ fontSize: 13, color: "#9a978c", marginRight: 8 }}>Vedi andamento esercizio:</span>
+              <select className="ga-input" style={{ width: 260, display: "inline-block" }} value={historyFilter} onChange={(e) => setHistoryFilter(e.target.value)}>
+                <option value="">-- tutte le sessioni --</option>
+                {data.exercises.filter((e) => e.type === "weight").map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+            </div>
+            {historyFilter ? (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ color: "#9a978c", textAlign: "left", borderBottom: "1px solid #26241f" }}>
+                  <th style={{ padding: "6px 4px" }}>Data</th><th style={{ padding: "6px 4px" }}>Serie</th><th></th>
+                </tr></thead>
+                <tbody>
+                  {exerciseHistoryRows.map((r, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid #1c1c19" }}>
+                      <td style={{ padding: "6px 4px" }} className="ga-mono">{fmtDate(r.date)}</td>
+                      <td style={{ padding: "6px 4px" }} className="ga-mono">{r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ")}</td>
+                      <td>{r.entry.flag && "⚠️"}</td>
+                    </tr>
+                  ))}
+                  {exerciseHistoryRows.length === 0 && <tr><td colSpan={3} style={{ padding: 12, color: "#9a978c" }}>Nessuno storico per questo esercizio.</td></tr>}
+                </tbody>
+              </table>
+            ) : (
+              <div>
+                {sortedSessions.length === 0 && <div style={{ color: "#9a978c" }}>Ancora nessun allenamento registrato.</div>}
+                {sortedSessions.map((s) => (
+                  <div key={s.id} style={{ marginBottom: 8, border: "1px solid #26241f", borderRadius: 8, overflow: "hidden" }}>
+                    <div onClick={() => setExpandedSession(expandedSession === s.id ? null : s.id)} style={{ padding: "10px 14px", background: "#1c1c19", cursor: "pointer", display: "flex", justifyContent: "space-between" }}>
+                      <span className="ga-mono">{fmtDate(s.date)}</span>
+                      <span style={{ fontSize: 12, color: "#9a978c" }}>{s.entries.length} esercizi {expandedSession === s.id ? "▲" : "▼"}</span>
+                    </div>
+                    {expandedSession === s.id && (
+                      <div style={{ padding: "10px 14px" }}>
+                        {s.entries.map((e, i) => {
+                          const ex = exercisesById[e.exerciseId];
+                          return (
+                            <div key={i} style={{ fontSize: 13, marginBottom: 6, display: "flex", justifyContent: "space-between" }}>
+                              <span>{ex ? ex.name : e.exerciseId} {e.flag && "⚠️"}</span>
+                              <span className="ga-mono" style={{ color: "#9a978c" }}>{ex && ex.type === "weight" ? e.sets.map((s2) => `${s2.weight}x${s2.reps}`).join(" / ") : e.note}</span>
+                            </div>
+                          );
+                        })}
+                        <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid #26241f" }}>
+                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => editSession(s)}>Modifica</button>
+                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", borderColor: "#E2572B", color: "#E2572B" }} onClick={() => deleteSession(s.id)}>🗑 Elimina</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "library" && (
+          <div>
+            {groupedLibrary.map((g) => (
+              <div key={g.cat} style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 12, textTransform: "uppercase", color: "#9a978c", marginBottom: 8 }}>{g.cat}</div>
+                {g.items.map((ex) => {
+                  const isOpen = expandedExercise === ex.id;
+                  const rows = isOpen ? getExerciseHistoryRows(ex.id) : [];
+                  return (
+                    <div key={ex.id} style={{ borderBottom: "1px solid #1c1c19" }}>
+                      <div onClick={() => setExpandedExercise(isOpen ? null : ex.id)} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
+                        <span>{ex.name}</span>
+                        <span className="ga-mono" style={{ color: "#9a978c" }}>
+                          {ex.type === "weight" ? `+${ex.increment}${ex.unit} · massa ${ex.rangeMassa[0]}-${ex.rangeMassa[1]} · forza ${ex.rangeForza[0]}-${ex.rangeForza[1]}` : "libero"} {isOpen ? "▲" : "▼"}
+                        </span>
+                      </div>
+                      {isOpen && (
+                        <div style={{ padding: "4px 0 12px 0" }}>
+                          {rows.length === 0 ? <div style={{ fontSize: 12, color: "#9a978c" }}>Nessuno storico.</div> : (
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                              <tbody>
+                                {rows.map((r, i) => (
+                                  <tr key={i} style={{ borderTop: "1px solid #26241f" }}>
+                                    <td style={{ padding: "4px 4px" }} className="ga-mono">{fmtDate(r.date)}</td>
+                                    <td style={{ padding: "4px 4px" }} className="ga-mono">{ex.type === "weight" ? r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ") : r.entry.note}</td>
+                                    <td>{r.entry.flag && "⚠️"}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab === "settings" && (
+          <div>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Sincronizzazione Google Drive</div>
+              {!signedIn ? (
+                <button className="ga-btn ga-btn-accent" onClick={requestSignIn}>🔐 Accedi con Google</button>
+              ) : (
+                <div style={{ fontSize: 13, color: syncColor }}>● {syncLabel}</div>
+              )}
+              <div style={{ fontSize: 12, color: "#9a978c", marginTop: 6 }}>
+                I dati vengono salvati in una cartella riservata all'app nel tuo Google Drive, non visibile tra i tuoi file normali. Accedendo con lo stesso account da un altro dispositivo, i dati si sincronizzano automaticamente.
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Backup manuale (paracadute extra)</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="ga-btn" onClick={() => { setExportText(JSON.stringify(data)); setShowImport(false); }}>Esporta dati</button>
+                <button className="ga-btn" onClick={() => { setShowImport(true); setExportText(null); setImportMsg(null); }}>Importa dati</button>
+              </div>
+              {exportText && (
+                <div style={{ marginTop: 10 }}>
+                  <textarea className="ga-input" readOnly value={exportText} rows={5} style={{ fontSize: 11 }} onFocus={(e) => e.target.select()} />
+                </div>
+              )}
+              {showImport && (
+                <div style={{ marginTop: 10 }}>
+                  <textarea className="ga-input" placeholder="Incolla qui il testo esportato" value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} style={{ fontSize: 11 }} />
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#E2572B" }}>Attenzione: sostituisce tutti i dati.</div>
+                  <button className="ga-btn ga-btn-accent" style={{ marginTop: 8 }} onClick={importFromText}>Conferma importazione</button>
+                </div>
+              )}
+              {importMsg && <div style={{ marginTop: 8, fontSize: 12 }}>{importMsg}</div>}
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Fase di programmazione</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className={`ga-btn ${data.phase === "massa" ? "ga-btn-accent" : ""}`} onClick={() => persist({ ...data, phase: "massa" })}>🔥 Massa (8-12 reps)</button>
+                <button className={`ga-btn ${data.phase === "forza" ? "ga-btn-accent" : ""}`} onClick={() => persist({ ...data, phase: "forza" })}>🔥 Forza (4-6 reps)</button>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Dati</div>
+              {!confirmReset ? (
+                <button className="ga-btn" onClick={() => setConfirmReset(true)}>🗑 Cancella tutti i dati</button>
+              ) : (
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 13, color: "#E2572B" }}>Sicuro? Non si può annullare.</span>
+                  <button className="ga-btn" style={{ borderColor: "#E2572B", color: "#E2572B" }} onClick={() => { persist({ phase: "massa", exercises: DEFAULT_EXERCISES, sessions: [] }); setConfirmReset(false); }}>Conferma</button>
+                  <button className="ga-btn" onClick={() => setConfirmReset(false)}>Annulla</button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<GymAgent />);
+</script>
+
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

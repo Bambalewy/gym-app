@@ -1,7 +1,7 @@
 {
-  "id": "/gym-app/",
-  "name": "Back to Back Gym",
-  "short_name": "BB Gym",
+  "id": "/GymBroDemo/",
+  "name": "BB Gym (Demo)",
+  "short_name": "BB Gym Demo",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

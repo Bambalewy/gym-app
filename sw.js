@@ -1,4 +1,4 @@
-const CACHE_NAME = "bb-gym-cache-v3";
+const CACHE_NAME = "bb-gym-demo-cache-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -29,13 +29,11 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = event.request.url;
 
-  // Le chiamate a Google (login + Drive) devono SEMPRE andare in rete, mai cache.
   if (url.includes("google") || url.includes("googleapis")) {
     return;
   }
 
-  // index.html / navigazioni: network-first con fallback alla cache (offline).
-  if (event.request.mode === "navigate" || url.endsWith("index.html") || url.endsWith("/gym-app/") || url.endsWith("/gym-app")) {
+  if (event.request.mode === "navigate" || url.endsWith("index.html") || url.endsWith("/GymBroDemo/") || url.endsWith("/GymBroDemo")) {
     event.respondWith(
       fetch(event.request)
         .then((res) => {
@@ -48,8 +46,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Tutto il resto (incluso vendor/*): cache-first con fallback alla rete,
-  // così React/Babel sono disponibili anche senza connessione.
   event.respondWith(
     caches.match(event.request).then((cached) => cached || fetch(event.request).then((res) => {
       const clone = res.clone();

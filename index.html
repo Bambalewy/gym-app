@@ -64,9 +64,10 @@ const DEFAULT_EXERCISES = [
   { id: "french-press", name: "French press (bilanciere Z, peso per lato)", category: "Tricipiti", type: "weight", increment: 1.25, unit: "kg/lato", rangeMassa: [8, 12], rangeForza: [6, 8], defaultSets: 3 },
   { id: "estensioni-cavo-basso", name: "Estensioni tricipiti al cavo basso", category: "Tricipiti", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 3 },
   { id: "push-con-corde", name: "Push con corde (cavo alto)", category: "Tricipiti", type: "weight", increment: 1, unit: "kg", rangeMassa: [10, 15], rangeForza: [8, 10], defaultSets: 3 },
-  { id: "leg-press-45", name: "Leg press 45", category: "Gambe", type: "weight", increment: 5, unit: "kg", rangeMassa: [10, 12], rangeForza: [6, 8], defaultSets: 3 },
-  { id: "leg-press-orizz", name: "Leg press orizzontale", category: "Gambe", type: "weight", increment: 10, unit: "lb", rangeMassa: [10, 12], rangeForza: [6, 8], defaultSets: 3 },
-  { id: "leg-curl", name: "Leg curl (sdraiato/seduto)", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [10, 12], rangeForza: [8, 10], defaultSets: 3 },
+  { id: "leg-press-45", name: "Leg press 45", category: "Gambe", type: "weight", increment: 5, unit: "kg", rangeMassa: [10, 12], rangeForza: [6, 8], defaultSets: 3, variantGroup: "leg-press", groupLabel: "Leg Press", variantLabel: "45°" },
+  { id: "leg-press-orizz", name: "Leg press orizzontale", category: "Gambe", type: "weight", increment: 10, unit: "lb", rangeMassa: [10, 12], rangeForza: [6, 8], defaultSets: 3, variantGroup: "leg-press", groupLabel: "Leg Press", variantLabel: "Orizzontale" },
+  { id: "leg-curl", name: "Leg curl sdraiato", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [10, 12], rangeForza: [8, 10], defaultSets: 3, variantGroup: "leg-curl", groupLabel: "Leg Curl", variantLabel: "Sdraiato" },
+  { id: "leg-curl-seduto", name: "Leg curl seduto", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [10, 12], rangeForza: [8, 10], defaultSets: 3, variantGroup: "leg-curl", groupLabel: "Leg Curl", variantLabel: "Seduto" },
   { id: "stacco-rumeno", name: "Stacco rumeno (gambe tese)", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 10], rangeForza: [5, 6], defaultSets: 3 },
   { id: "squat", name: "Squat", category: "Gambe", type: "weight", increment: 2.5, unit: "kg", rangeMassa: [8, 10], rangeForza: [4, 6], defaultSets: 3 },
   { id: "calf-pressa", name: "Calf alla pressa", category: "Gambe", type: "weight", increment: 5, unit: "kg", rangeMassa: [12, 15], rangeForza: [10, 12], defaultSets: 3 },
@@ -255,9 +256,6 @@ function computeSuggestion(exercise, sessions, phase) {
   const setsAtWeight = last.sets.filter((s) => s.weight === workingWeight);
   const allTop = setsAtWeight.length > 0 && setsAtWeight.every((s) => s.reps >= range[1]);
 
-  if (last.flag) {
-    return { text: `L'ultima volta avevi segnalato fastidio/infortunio. Riparti con cautela: stesso peso (${workingWeight}${exercise.unit}), punta a ${range[0]} reps.`, weight: workingWeight, reps: range[0], sets: last.sets.length };
-  }
   if (allTop) {
     const newWeight = round(workingWeight + exercise.increment);
     return { text: `Hai raggiunto il top del range (${range[1]} reps): sali a ${newWeight}${exercise.unit} e riparti da ${range[0]} reps.`, weight: newWeight, reps: range[0], sets: last.sets.length };
@@ -281,10 +279,29 @@ function computeSuggestion(exercise, sessions, phase) {
 /* =========================================================
    STORAGE LOCALE (sempre attivo, offline-first)
    ========================================================= */
+// Aggiorna la libreria esercizi salvata dall'utente con le novità del codice
+// (nuovi esercizi, campi variantGroup, ecc.) senza toccare sessioni o personalizzazioni.
+function mergeExerciseLibrary(savedExercises) {
+  const saved = Array.isArray(savedExercises) ? savedExercises : [];
+  const savedIds = new Set(saved.map((e) => e.id));
+  const merged = saved.map((ex) => {
+    const def = DEFAULT_EXERCISES.find((d) => d.id === ex.id);
+    return def ? { ...ex, ...def } : ex; // il codice più recente vince sui metadati di libreria
+  });
+  DEFAULT_EXERCISES.forEach((def) => {
+    if (!savedIds.has(def.id)) merged.push(def); // aggiunge i nuovi esercizi introdotti negli aggiornamenti
+  });
+  return merged;
+}
+
 function loadLocal() {
   try {
     const raw = localStorage.getItem(LOCAL_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      parsed.exercises = mergeExerciseLibrary(parsed.exercises);
+      return parsed;
+    }
   } catch (e) {}
   return { phase: "massa", exercises: DEFAULT_EXERCISES, sessions: DEFAULT_SESSIONS, updatedAt: 0 };
 }
@@ -391,6 +408,7 @@ function GymAgent() {
 
   const dataRef = useRef(data);
   dataRef.current = data;
+  const currentSessionIdRef = useRef(null);
 
   /* --- init Google auth appena lo script GIS è pronto --- */
   useEffect(() => {
@@ -418,6 +436,7 @@ function GymAgent() {
       setDriveFileId(fileId);
       const remoteStr = await driveGetContent(token, fileId);
       const remote = JSON.parse(remoteStr);
+      remote.exercises = mergeExerciseLibrary(remote.exercises);
       const local = dataRef.current;
       // last-write-wins in base a updatedAt
       if ((remote.updatedAt || 0) > (local.updatedAt || 0)) {
@@ -450,6 +469,34 @@ function GymAgent() {
   const sortedSessions = [...data.sessions].sort((a, b) => new Date(b.date) - new Date(a.date));
   const exercisesById = Object.fromEntries(data.exercises.map((e) => [e.id, e]));
 
+  function lastUsedVariantId(groupExercises) {
+    let bestId = groupExercises[0].id;
+    let bestDate = null;
+    groupExercises.forEach((ex) => {
+      const found = sortedSessions.find((s) => s.entries.some((e) => e.exerciseId === ex.id));
+      if (found && (!bestDate || new Date(found.date) > new Date(bestDate))) {
+        bestDate = found.date;
+        bestId = ex.id;
+      }
+    });
+    return bestId;
+  }
+
+  function buildPickerItems(items) {
+    const seen = new Set();
+    const out = [];
+    items.forEach((ex) => {
+      if (ex.variantGroup) {
+        if (seen.has(ex.variantGroup)) return;
+        seen.add(ex.variantGroup);
+        out.push({ type: "group", key: ex.variantGroup, label: ex.groupLabel, exercises: items.filter((e) => e.variantGroup === ex.variantGroup) });
+      } else {
+        out.push({ type: "single", ex });
+      }
+    });
+    return out;
+  }
+
   const exerciseHistoryRows = useMemo(() => {
     if (!historyFilter) return [];
     return sortedSessions
@@ -476,12 +523,13 @@ function GymAgent() {
       if (ex.type === "weight") {
         newToday[entry.exerciseId] = {
           sets: entry.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
-          flag: false, note: "", suggestion: sug,
+          note: "", suggestion: sug,
         };
       } else {
-        newToday[entry.exerciseId] = { note: "", flag: false, suggestion: sug };
+        newToday[entry.exerciseId] = { note: "", suggestion: sug };
       }
     });
+    currentSessionIdRef.current = null;
     setToday(newToday);
     setSessionDate(todayISO());
     setTab("log");
@@ -497,12 +545,13 @@ function GymAgent() {
       if (ex.type === "weight") {
         newToday[entry.exerciseId] = {
           sets: entry.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
-          flag: entry.flag, note: entry.note || "", suggestion: sug,
+          note: entry.note || "", suggestion: sug,
         };
       } else {
-        newToday[entry.exerciseId] = { note: entry.note || "", flag: entry.flag, suggestion: sug };
+        newToday[entry.exerciseId] = { note: entry.note || "", suggestion: sug };
       }
     });
+    currentSessionIdRef.current = null;
     setToday(newToday);
     setSessionDate(session.date);
     deleteSession(session.id);
@@ -517,6 +566,7 @@ function GymAgent() {
         setImportMsg("Formato non valido.");
         return;
       }
+      parsed.exercises = mergeExerciseLibrary(parsed.exercises);
       persist(parsed);
       setImportMsg("Importazione riuscita: " + parsed.sessions.length + " sessioni caricate.");
       setImportText("");
@@ -532,8 +582,8 @@ function GymAgent() {
     setToday((t) => ({
       ...t,
       [ex.id]: ex.type === "weight"
-        ? { sets: Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })), flag: false, note: "", suggestion: sug }
-        : { note: "", flag: false, suggestion: sug },
+        ? { sets: Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })), note: "", suggestion: sug }
+        : { note: "", suggestion: sug },
     }));
     setPickerOpen(false);
   }
@@ -571,17 +621,23 @@ function GymAgent() {
   function addSetRow(exId) {
     setToday((t) => { const entry = { ...t[exId] }; entry.sets = [...entry.sets, { weight: "", reps: "" }]; return { ...t, [exId]: entry }; });
   }
+  function applyFirstToAll(exId) {
+    setToday((t) => {
+      const entry = { ...t[exId] };
+      const first = entry.sets[0];
+      if (!first || first.weight === "" || first.reps === "") return t;
+      entry.sets = entry.sets.map(() => ({ weight: first.weight, reps: first.reps }));
+      return { ...t, [exId]: entry };
+    });
+  }
   function removeSetRow(exId, idx) {
     setToday((t) => { const entry = { ...t[exId] }; entry.sets = entry.sets.filter((_, i) => i !== idx); return { ...t, [exId]: entry }; });
-  }
-  function toggleFlag(exId) {
-    setToday((t) => ({ ...t, [exId]: { ...t[exId], flag: !t[exId].flag } }));
   }
   function updateNote(exId, val) {
     setToday((t) => ({ ...t, [exId]: { ...t[exId], note: val } }));
   }
 
-  function saveSession() {
+  function saveSession(final) {
     const ids = Object.keys(today);
     if (ids.length === 0) return;
     const entries = ids.map((exId) => {
@@ -589,19 +645,30 @@ function GymAgent() {
       const entry = today[exId];
       if (ex.type === "weight") {
         return {
-          exerciseId: exId, flag: entry.flag,
+          exerciseId: exId,
           note: entry.note || "",
           sets: entry.sets.filter((s) => s.weight !== "" && s.reps !== "")
             .map((s) => ({ weight: parseFloat(s.weight), reps: parseInt(s.reps, 10) })),
         };
       }
-      return { exerciseId: exId, flag: entry.flag, note: entry.note };
+      return { exerciseId: exId, note: entry.note };
     });
-    const session = { id: uid(), date: sessionDate, entries };
-    persist({ ...data, sessions: [...data.sessions, session] });
-    setToday({});
-    setSessionDate(todayISO());
-    setTab("history");
+    const existingId = currentSessionIdRef.current;
+    let nextSessions;
+    if (existingId && data.sessions.some((s) => s.id === existingId)) {
+      nextSessions = data.sessions.map((s) => (s.id === existingId ? { id: existingId, date: sessionDate, entries } : s));
+    } else {
+      const newId = uid();
+      currentSessionIdRef.current = newId;
+      nextSessions = [...data.sessions, { id: newId, date: sessionDate, entries }];
+    }
+    persist({ ...data, sessions: nextSessions });
+    if (final) {
+      setToday({});
+      setSessionDate(todayISO());
+      currentSessionIdRef.current = null;
+      setTab("history");
+    }
   }
 
   const groupedLibrary = CATEGORIES.map((cat) => ({ cat, items: data.exercises.filter((e) => e.category === cat) }));
@@ -660,10 +727,36 @@ function GymAgent() {
                   {groupedLibrary.map((g) => (
                     <div key={g.cat} style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 11, textTransform: "uppercase", color: "#9a978c", marginBottom: 6 }}>{g.cat}</div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {g.items.map((ex) => (
-                          <span key={ex.id} className="ga-chip" onClick={() => addExerciseToToday(ex)} style={today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}}>{ex.name}</span>
-                        ))}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                        {buildPickerItems(g.items).map((item) => {
+                          if (item.type === "single") {
+                            const ex = item.ex;
+                            return (
+                              <span key={ex.id} className="ga-chip" onClick={() => addExerciseToToday(ex)} style={today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}}>{ex.name}</span>
+                            );
+                          }
+                          const lastId = lastUsedVariantId(item.exercises);
+                          return (
+                            <div key={item.key} style={{ display: "flex", flexDirection: "column", gap: 4, border: "1px dashed #33312a", borderRadius: 8, padding: 6 }}>
+                              <span style={{ fontSize: 10, color: "#9a978c", textTransform: "uppercase" }}>{item.label}</span>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                {item.exercises.map((ex) => (
+                                  <span
+                                    key={ex.id}
+                                    className="ga-chip"
+                                    onClick={() => addExerciseToToday(ex)}
+                                    style={{
+                                      ...(today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}),
+                                      ...(ex.id === lastId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}),
+                                    }}
+                                  >
+                                    {ex.variantLabel}{ex.id === lastId ? " ✓" : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
@@ -713,11 +806,6 @@ function GymAgent() {
                     </div>
                     <button className="ga-btn" style={{ padding: "6px 8px" }} onClick={() => removeExerciseFromToday(exId)}>✕</button>
                   </div>
-                  <div style={{ marginTop: 10 }}>
-                    <label style={{ fontSize: 12, color: "#9a978c", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                      <input type="checkbox" checked={entry.flag} onChange={() => toggleFlag(exId)} /> ⚠️ fastidio / infortunio
-                    </label>
-                  </div>
                   {ex.type === "weight" ? (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ display: "grid", gridTemplateColumns: "24px 1fr 1fr 24px", gap: 8, fontSize: 11, color: "#9a978c", marginBottom: 4 }}>
@@ -732,6 +820,7 @@ function GymAgent() {
                         </div>
                       ))}
                       <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => addSetRow(exId)}>+ serie</button>
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginLeft: 6 }} onClick={() => applyFirstToAll(exId)}>📋 Applica 1ª serie a tutte</button>
                       <input className="ga-input" style={{ marginTop: 10 }} placeholder="Nota (facoltativa, es. sensazioni, tecnica...)" value={entry.note || ""} onChange={(e) => updateNote(exId, e.target.value)} />
                     </div>
                   ) : (
@@ -744,7 +833,10 @@ function GymAgent() {
             })}
 
             {Object.keys(today).length > 0 && (
-              <button className="ga-btn ga-btn-accent" onClick={saveSession} style={{ marginTop: 8 }}>💾 Salva allenamento</button>
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <button className="ga-btn" onClick={() => saveSession(false)}>💾 Salva parziale (continua)</button>
+                <button className="ga-btn ga-btn-accent" onClick={() => saveSession(true)}>✅ Salva allenamento</button>
+              </div>
             )}
           </div>
         )}
@@ -771,7 +863,7 @@ function GymAgent() {
                         {r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ")}
                         {r.entry.note && <div style={{ color: "#D6E24B", fontStyle: "italic", fontFamily: "system-ui, sans-serif" }}>📝 {r.entry.note}</div>}
                       </td>
-                      <td>{r.entry.flag && "⚠️"}</td>
+                      <td></td>
                     </tr>
                   ))}
                   {exerciseHistoryRows.length === 0 && <tr><td colSpan={3} style={{ padding: 12, color: "#9a978c" }}>Nessuno storico per questo esercizio.</td></tr>}
@@ -793,7 +885,7 @@ function GymAgent() {
                           return (
                             <div key={i} style={{ marginBottom: 6 }}>
                               <div style={{ fontSize: 13, display: "flex", justifyContent: "space-between" }}>
-                                <span>{ex ? ex.name : e.exerciseId} {e.flag && "⚠️"}</span>
+                                <span>{ex ? ex.name : e.exerciseId}</span>
                                 <span className="ga-mono" style={{ color: "#9a978c" }}>{ex && ex.type === "weight" ? e.sets.map((s2) => `${s2.weight}x${s2.reps}`).join(" / ") : e.note}</span>
                               </div>
                               {ex && ex.type === "weight" && e.note && (
@@ -841,7 +933,7 @@ function GymAgent() {
                                   <tr key={i} style={{ borderTop: "1px solid #26241f" }}>
                                     <td style={{ padding: "4px 4px" }} className="ga-mono">{fmtDate(r.date)}</td>
                                     <td style={{ padding: "4px 4px" }} className="ga-mono">{ex.type === "weight" ? r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ") : r.entry.note}</td>
-                                    <td>{r.entry.flag && "⚠️"}</td>
+                                    <td></td>
                                   </tr>
                                 ))}
                               </tbody>

@@ -16,10 +16,10 @@
 <body>
 <div id="root"></div>
 
-<!-- React (UMD, nessun build richiesto) -->
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<!-- React + Babel serviti in locale (offline reale, niente dipendenza da unpkg) -->
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/babel.min.js"></script>
 
 <!-- Google Identity Services (login + token OAuth) -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -39,6 +39,8 @@ const GOOGLE_CLIENT_ID = "609205488576-busghpdhkn9iq5tjug5jeagbad3k0ko5.apps.goo
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const DRIVE_FILENAME = "davide-gym-data.json";
 const LOCAL_KEY = "davide-gym-data-v1";
+// Versione schema: consente migrazioni pulite in futuro invece di affidarsi solo al merge libreria.
+const SCHEMA_VERSION = 1;
 
 /* =========================================================
    DATI DI BASE (esercizi e storico "seed")
@@ -252,6 +254,11 @@ function computeSuggestion(exercise, sessions, phase) {
     return { text: `Prima volta: scegli un peso con cui arrivi a ${range[0]}-${range[1]} ripetizioni per ${exercise.defaultSets || 3} serie.`, weight: null, reps: range[0], sets: exercise.defaultSets || 3 };
   }
   const last = history[0].entries.find((e) => e.exerciseId === exercise.id);
+  // Guardia: una entry storica a peso potrebbe avere 0 set validi (dati vecchi/importati).
+  // Senza questo controllo Math.max(...[]) restituirebbe -Infinity e romperebbe il suggerimento.
+  if (!last.sets || last.sets.length === 0) {
+    return { text: `Nessun dato utilizzabile nell'ultima sessione: scegli un peso con cui arrivi a ${range[0]}-${range[1]} ripetizioni.`, weight: null, reps: range[0], sets: exercise.defaultSets || 3 };
+  }
   const workingWeight = Math.max(...last.sets.map((s) => s.weight));
   const setsAtWeight = last.sets.filter((s) => s.weight === workingWeight);
   const allTop = setsAtWeight.length > 0 && setsAtWeight.every((s) => s.reps >= range[1]);
@@ -300,10 +307,11 @@ function loadLocal() {
     if (raw) {
       const parsed = JSON.parse(raw);
       parsed.exercises = mergeExerciseLibrary(parsed.exercises);
+      if (parsed.schemaVersion == null) parsed.schemaVersion = SCHEMA_VERSION;
       return parsed;
     }
   } catch (e) {}
-  return { phase: "massa", exercises: DEFAULT_EXERCISES, sessions: DEFAULT_SESSIONS, updatedAt: 0 };
+  return { schemaVersion: SCHEMA_VERSION, phase: "massa", exercises: DEFAULT_EXERCISES, sessions: DEFAULT_SESSIONS, updatedAt: 0 };
 }
 function saveLocal(data) {
   try { localStorage.setItem(LOCAL_KEY, JSON.stringify(data)); } catch (e) {}
@@ -400,6 +408,7 @@ function GymAgent() {
 
   const [signedIn, setSignedIn] = useState(false);
   const [syncStatus, setSyncStatus] = useState("offline"); // offline | syncing | synced | error
+  const [syncNotice, setSyncNotice] = useState(null); // avviso non bloccante (es. dati sovrascritti da Drive)
   const [driveFileId, setDriveFileId] = useState(null);
   const [exportText, setExportText] = useState(null);
   const [importText, setImportText] = useState("");
@@ -428,8 +437,13 @@ function GymAgent() {
     try {
       let fileId = driveFileId || await driveFindFileId(token);
       if (!fileId) {
-        fileId = await driveCreateFile(token, JSON.stringify(dataRef.current));
+        // Fix: timbra updatedAt alla creazione, altrimenti (updatedAt=0) un altro
+        // device tratterebbe il file remoto come "vecchio" e lo sovrascriverebbe.
+        const seed = { ...dataRef.current, schemaVersion: SCHEMA_VERSION, updatedAt: Date.now() };
+        fileId = await driveCreateFile(token, JSON.stringify(seed));
         setDriveFileId(fileId);
+        setData(seed);
+        saveLocal(seed);
         setSyncStatus("synced");
         return;
       }
@@ -440,6 +454,13 @@ function GymAgent() {
       const local = dataRef.current;
       // last-write-wins in base a updatedAt
       if ((remote.updatedAt || 0) > (local.updatedAt || 0)) {
+        // Se il locale non era "vuoto/default" e viene comunque sostituito, avvisa:
+        // con modifiche offline su piu device uno dei due set puo essere perso.
+        const localHadEdits = (local.updatedAt || 0) > 0;
+        if (localHadEdits) {
+          setSyncNotice("Su Drive c'erano dati piu recenti: questo dispositivo e stato aggiornato. Eventuali modifiche fatte offline qui potrebbero essere state sostituite.");
+        }
+        if (remote.schemaVersion == null) remote.schemaVersion = SCHEMA_VERSION;
         setData(remote);
         saveLocal(remote);
       } else if ((local.updatedAt || 0) > (remote.updatedAt || 0)) {
@@ -452,7 +473,7 @@ function GymAgent() {
   }
 
   function persist(next) {
-    const stamped = { ...next, updatedAt: Date.now() };
+    const stamped = { schemaVersion: SCHEMA_VERSION, ...next, updatedAt: Date.now() };
     setData(stamped);
     saveLocal(stamped);
     if (currentToken && driveFileId) {
@@ -466,8 +487,14 @@ function GymAgent() {
     }
   }
 
-  const sortedSessions = [...data.sessions].sort((a, b) => new Date(b.date) - new Date(a.date));
-  const exercisesById = Object.fromEntries(data.exercises.map((e) => [e.id, e]));
+  const sortedSessions = useMemo(
+    () => [...data.sessions].sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [data.sessions]
+  );
+  const exercisesById = useMemo(
+    () => Object.fromEntries(data.exercises.map((e) => [e.id, e])),
+    [data.exercises]
+  );
 
   function lastUsedVariantId(groupExercises) {
     let bestId = groupExercises[0].id;
@@ -502,7 +529,7 @@ function GymAgent() {
     return sortedSessions
       .filter((s) => s.entries.some((e) => e.exerciseId === historyFilter))
       .map((s) => ({ date: s.date, entry: s.entries.find((e) => e.exerciseId === historyFilter) }));
-  }, [historyFilter, data]);
+  }, [historyFilter, sortedSessions]);
 
   function getExerciseHistoryRows(exerciseId) {
     return sortedSessions
@@ -551,10 +578,11 @@ function GymAgent() {
         newToday[entry.exerciseId] = { note: entry.note || "", suggestion: sug };
       }
     });
-    currentSessionIdRef.current = null;
+    // Fix: non cancelliamo piu la sessione qui (evita doppio persist sullo stesso
+    // snapshot di `data`). Teniamo l'id: saveSession fara' l'update in-place.
+    currentSessionIdRef.current = session.id;
     setToday(newToday);
     setSessionDate(session.date);
-    deleteSession(session.id);
     setTab("log");
   }
 
@@ -647,12 +675,21 @@ function GymAgent() {
         return {
           exerciseId: exId,
           note: entry.note || "",
-          sets: entry.sets.filter((s) => s.weight !== "" && s.reps !== "")
-            .map((s) => ({ weight: parseFloat(s.weight), reps: parseInt(s.reps, 10) })),
+          // Fix 4: valida i numeri (parseFloat("-") o "1.2.3" -> NaN) e scarta i set invalidi.
+          sets: entry.sets
+            .map((s) => ({ weight: parseFloat(s.weight), reps: parseInt(s.reps, 10) }))
+            .filter((s) => Number.isFinite(s.weight) && Number.isFinite(s.reps) && s.reps > 0),
         };
       }
       return { exerciseId: exId, note: entry.note };
+    })
+    // Fix 2: non salvare entry a peso rimaste senza alcun set valido
+    // (altrimenti sets:[] manda in tilt computeSuggestion con Math.max su array vuoto).
+    .filter((e) => {
+      const ex = exercisesById[e.exerciseId];
+      return !(ex && ex.type === "weight" && e.sets.length === 0);
     });
+    if (entries.length === 0) return;
     const existingId = currentSessionIdRef.current;
     let nextSessions;
     if (existingId && data.sessions.some((s) => s.id === existingId)) {
@@ -961,6 +998,12 @@ function GymAgent() {
               <div style={{ fontSize: 12, color: "#9a978c", marginTop: 6 }}>
                 I dati vengono salvati in una cartella riservata all'app nel tuo Google Drive, non visibile tra i tuoi file normali. Accedendo con lo stesso account da un altro dispositivo, i dati si sincronizzano automaticamente.
               </div>
+              {syncNotice && (
+                <div style={{ marginTop: 10, fontSize: 12, color: "#121210", background: "#D6E24B", borderRadius: 6, padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <span>⚠️ {syncNotice}</span>
+                  <button className="ga-btn" style={{ fontSize: 11, padding: "3px 8px", borderColor: "#121210", color: "#121210" }} onClick={() => setSyncNotice(null)}>OK</button>
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: 20 }}>
@@ -997,9 +1040,9 @@ function GymAgent() {
               {!confirmReset ? (
                 <button className="ga-btn" onClick={() => setConfirmReset(true)}>🗑 Cancella tutti i dati</button>
               ) : (
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ fontSize: 13, color: "#E2572B" }}>Sicuro? Non si può annullare.</span>
-                  <button className="ga-btn" style={{ borderColor: "#E2572B", color: "#E2572B" }} onClick={() => { persist({ phase: "massa", exercises: DEFAULT_EXERCISES, sessions: [] }); setConfirmReset(false); }}>Conferma</button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, color: "#E2572B" }}>Sicuro? Verranno rimossi anche gli esercizi personalizzati. Non si può annullare.</span>
+                  <button className="ga-btn" style={{ borderColor: "#E2572B", color: "#E2572B" }} onClick={() => { persist({ schemaVersion: SCHEMA_VERSION, phase: "massa", exercises: DEFAULT_EXERCISES, sessions: [] }); setConfirmReset(false); }}>Conferma</button>
                   <button className="ga-btn" onClick={() => setConfirmReset(false)}>Annulla</button>
                 </div>
               )}

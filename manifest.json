@@ -1,7 +1,9 @@
 {
+  "id": "/gym-app/",
   "name": "Back to Back Gym",
   "short_name": "BB Gym",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#121210",
   "theme_color": "#121210",

@@ -1,5 +1,14 @@
-const CACHE_NAME = "bb-gym-cache-v2";
-const ASSETS = ["./manifest.json", "./icon-192.png", "./icon-512.png"];
+const CACHE_NAME = "bb-gym-cache-v3";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./vendor/react.production.min.js",
+  "./vendor/react-dom.production.min.js",
+  "./vendor/babel.min.js",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -20,10 +29,12 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = event.request.url;
 
-  if (url.includes("google") || url.includes("googleapis") || url.includes("unpkg.com")) {
+  // Le chiamate a Google (login + Drive) devono SEMPRE andare in rete, mai cache.
+  if (url.includes("google") || url.includes("googleapis")) {
     return;
   }
 
+  // index.html / navigazioni: network-first con fallback alla cache (offline).
   if (event.request.mode === "navigate" || url.endsWith("index.html") || url.endsWith("/gym-app/") || url.endsWith("/gym-app")) {
     event.respondWith(
       fetch(event.request)
@@ -32,12 +43,18 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           return res;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() => caches.match(event.request).then((c) => c || caches.match("./index.html")))
     );
     return;
   }
 
+  // Tutto il resto (incluso vendor/*): cache-first con fallback alla rete,
+  // così React/Babel sono disponibili anche senza connessione.
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    caches.match(event.request).then((cached) => cached || fetch(event.request).then((res) => {
+      const clone = res.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+      return res;
+    }).catch(() => cached))
   );
 });

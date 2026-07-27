@@ -401,6 +401,7 @@ function GymAgent() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [today, setToday] = useState({});
   const [newExOpen, setNewExOpen] = useState(false);
+  const [replacingId, setReplacingId] = useState(null); // id esercizio in fase di sostituzione
   const [newExName, setNewExName] = useState("");
   const [newExCategory, setNewExCategory] = useState(CATEGORIES[0]);
   const [newExType, setNewExType] = useState("weight");
@@ -616,6 +617,43 @@ function GymAgent() {
     setPickerOpen(false);
   }
 
+  // Sostituisce un esercizio MANTENENDO la sua posizione nella sequenza di oggi.
+  // I valori già inseriti (peso/reps/nota) vengono conservati; il suggerimento
+  // viene ricalcolato sullo storico del NUOVO esercizio.
+  function replaceExerciseInToday(oldId, newEx) {
+    setToday((t) => {
+      if (!t[oldId]) return t;
+      if (oldId === newEx.id) return t;
+      if (t[newEx.id]) return t; // il nuovo esercizio è già in sessione: non lo duplico
+      const oldEntry = t[oldId];
+      const oldEx = exercisesById[oldId];
+      const sug = computeSuggestion(newEx, data.sessions, data.phase);
+      let newEntry;
+      if (newEx.type === "weight") {
+        const kept = oldEx && oldEx.type === "weight" && Array.isArray(oldEntry.sets) ? oldEntry.sets : null;
+        const nSets = sug.sets || newEx.defaultSets || 3;
+        newEntry = {
+          sets: kept && kept.length
+            ? kept.map((s) => ({ weight: s.weight, reps: s.reps }))
+            : Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })),
+          note: oldEntry.note || "",
+          suggestion: sug,
+        };
+      } else {
+        newEntry = { note: oldEntry.note || "", suggestion: sug };
+      }
+      // Ricostruisco l'oggetto preservando l'ordine delle chiavi: la card resta al suo posto.
+      const next = {};
+      Object.keys(t).forEach((k) => {
+        if (k === oldId) next[newEx.id] = newEntry;
+        else next[k] = t[k];
+      });
+      return next;
+    });
+    setReplacingId(null);
+    setNewExOpen(false);
+  }
+
   function createCustomExercise() {
     const name = newExName.trim();
     if (!name) return;
@@ -627,7 +665,8 @@ function GymAgent() {
         }
       : { id: "custom-" + uid(), name, category: newExCategory, type: "other" };
     persist({ ...data, exercises: [...data.exercises, newEx] });
-    addExerciseToToday(newEx);
+    if (replacingId) replaceExerciseInToday(replacingId, newEx);
+    else addExerciseToToday(newEx);
     setNewExName("");
     setNewExType("weight");
     setNewExUnit("kg");
@@ -710,6 +749,77 @@ function GymAgent() {
 
   const groupedLibrary = CATEGORIES.map((cat) => ({ cat, items: data.exercises.filter((e) => e.category === cat) }));
 
+  // Picker esercizi riutilizzabile: onPick riceve l'esercizio scelto.
+  // Usato sia da "Aggiungi esercizio" sia dalla sostituzione in-place.
+  function renderExercisePicker(onPick) {
+    return (
+                <div style={{ marginTop: 12, background: "#1c1c19", border: "1px solid #26241f", borderRadius: 8, padding: 14 }}>
+                  {groupedLibrary.map((g) => (
+                    <div key={g.cat} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", color: "#9a978c", marginBottom: 6 }}>{g.cat}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                        {buildPickerItems(g.items).map((item) => {
+                          if (item.type === "single") {
+                            const ex = item.ex;
+                            return (
+                              <span key={ex.id} className="ga-chip" onClick={() => onPick(ex)} style={today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}}>{ex.name}</span>
+                            );
+                          }
+                          const lastId = lastUsedVariantId(item.exercises);
+                          return (
+                            <div key={item.key} style={{ display: "flex", flexDirection: "column", gap: 4, border: "1px dashed #33312a", borderRadius: 8, padding: 6 }}>
+                              <span style={{ fontSize: 10, color: "#9a978c", textTransform: "uppercase" }}>{item.label}</span>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                {item.exercises.map((ex) => (
+                                  <span
+                                    key={ex.id}
+                                    className="ga-chip"
+                                    onClick={() => onPick(ex)}
+                                    style={{
+                                      ...(today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}),
+                                      ...(ex.id === lastId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}),
+                                    }}
+                                  >
+                                    {ex.variantLabel}{ex.id === lastId ? " ✓" : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #26241f" }}>
+                    {!newExOpen ? (
+                      <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(true)}>➕ Nuovo esercizio personalizzato</button>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <input className="ga-input" placeholder="Nome esercizio" value={newExName} onChange={(e) => setNewExName(e.target.value)} />
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <select className="ga-input" value={newExCategory} onChange={(e) => setNewExCategory(e.target.value)}>
+                            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <select className="ga-input" value={newExType} onChange={(e) => setNewExType(e.target.value)}>
+                            <option value="weight">A peso</option>
+                            <option value="other">Libero (reps/tempo)</option>
+                          </select>
+                        </div>
+                        {newExType === "weight" && (
+                          <input className="ga-input" placeholder="Unità di misura (es. kg, lb, kg/lato)" value={newExUnit} onChange={(e) => setNewExUnit(e.target.value)} />
+                        )}
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button className="ga-btn ga-btn-accent" style={{ fontSize: 13 }} onClick={createCustomExercise}>{replacingId ? "Crea e sostituisci" : "Crea e aggiungi"}</button>
+                          <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(false)}>Annulla</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+    );
+  }
+
   const syncLabel = {
     offline: "non collegato a Google",
     syncing: "sincronizzazione...",
@@ -759,72 +869,7 @@ function GymAgent() {
 
             <div style={{ marginBottom: 16 }}>
               <button className="ga-btn" onClick={() => setPickerOpen((v) => !v)}>➕ Aggiungi esercizio {pickerOpen ? "▲" : "▼"}</button>
-              {pickerOpen && (
-                <div style={{ marginTop: 12, background: "#1c1c19", border: "1px solid #26241f", borderRadius: 8, padding: 14 }}>
-                  {groupedLibrary.map((g) => (
-                    <div key={g.cat} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, textTransform: "uppercase", color: "#9a978c", marginBottom: 6 }}>{g.cat}</div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                        {buildPickerItems(g.items).map((item) => {
-                          if (item.type === "single") {
-                            const ex = item.ex;
-                            return (
-                              <span key={ex.id} className="ga-chip" onClick={() => addExerciseToToday(ex)} style={today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}}>{ex.name}</span>
-                            );
-                          }
-                          const lastId = lastUsedVariantId(item.exercises);
-                          return (
-                            <div key={item.key} style={{ display: "flex", flexDirection: "column", gap: 4, border: "1px dashed #33312a", borderRadius: 8, padding: 6 }}>
-                              <span style={{ fontSize: 10, color: "#9a978c", textTransform: "uppercase" }}>{item.label}</span>
-                              <div style={{ display: "flex", gap: 6 }}>
-                                {item.exercises.map((ex) => (
-                                  <span
-                                    key={ex.id}
-                                    className="ga-chip"
-                                    onClick={() => addExerciseToToday(ex)}
-                                    style={{
-                                      ...(today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}),
-                                      ...(ex.id === lastId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}),
-                                    }}
-                                  >
-                                    {ex.variantLabel}{ex.id === lastId ? " ✓" : ""}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #26241f" }}>
-                    {!newExOpen ? (
-                      <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(true)}>➕ Nuovo esercizio personalizzato</button>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <input className="ga-input" placeholder="Nome esercizio" value={newExName} onChange={(e) => setNewExName(e.target.value)} />
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <select className="ga-input" value={newExCategory} onChange={(e) => setNewExCategory(e.target.value)}>
-                            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                          <select className="ga-input" value={newExType} onChange={(e) => setNewExType(e.target.value)}>
-                            <option value="weight">A peso</option>
-                            <option value="other">Libero (reps/tempo)</option>
-                          </select>
-                        </div>
-                        {newExType === "weight" && (
-                          <input className="ga-input" placeholder="Unità di misura (es. kg, lb, kg/lato)" value={newExUnit} onChange={(e) => setNewExUnit(e.target.value)} />
-                        )}
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button className="ga-btn ga-btn-accent" style={{ fontSize: 13 }} onClick={createCustomExercise}>Crea e aggiungi</button>
-                          <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(false)}>Annulla</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              {pickerOpen && renderExercisePicker(addExerciseToToday)}
             </div>
 
             {Object.keys(today).length === 0 && (
@@ -841,8 +886,26 @@ function GymAgent() {
                       <div style={{ fontWeight: 600, fontSize: 15 }}>{ex.name}</div>
                       <div style={{ fontSize: 12, color: "#D6E24B", marginTop: 4 }}>{entry.suggestion?.text}</div>
                     </div>
-                    <button className="ga-btn" style={{ padding: "6px 8px" }} onClick={() => removeExerciseFromToday(exId)}>✕</button>
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <button
+                        className="ga-btn"
+                        title="Sostituisci esercizio"
+                        style={{ padding: "6px 8px", ...(replacingId === exId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}) }}
+                        onClick={() => { setReplacingId((v) => (v === exId ? null : exId)); setNewExOpen(false); setPickerOpen(false); }}
+                      >🔄</button>
+                      <button className="ga-btn" style={{ padding: "6px 8px" }} onClick={() => removeExerciseFromToday(exId)}>✕</button>
+                    </div>
                   </div>
+
+                  {replacingId === exId && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 12, color: "#9a978c" }}>
+                        Scegli il nuovo esercizio: resta in questa posizione e i valori già inseriti vengono mantenuti.
+                      </div>
+                      {renderExercisePicker((newEx) => replaceExerciseInToday(exId, newEx))}
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginTop: 8 }} onClick={() => { setReplacingId(null); setNewExOpen(false); }}>Annulla sostituzione</button>
+                    </div>
+                  )}
                   {ex.type === "weight" ? (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ display: "grid", gridTemplateColumns: "24px 1fr 1fr 24px", gap: 8, fontSize: 11, color: "#9a978c", marginBottom: 4 }}>

@@ -587,6 +587,23 @@ function GymAgent() {
     setTab("log");
   }
 
+  function downloadBackup() {
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const d = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `bbgym-backup-${d}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      setExportText(JSON.stringify(data));
+    }
+  }
+
   function importFromText() {
     setImportMsg(null);
     try {
@@ -1072,7 +1089,7 @@ function GymAgent() {
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Backup manuale (paracadute extra)</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button className="ga-btn" onClick={() => { setExportText(JSON.stringify(data)); setShowImport(false); }}>Esporta dati</button>
+                <button className="ga-btn" onClick={downloadBackup}>⬇️ Esporta backup (file)</button>
                 <button className="ga-btn" onClick={() => { setShowImport(true); setExportText(null); setImportMsg(null); }}>Importa dati</button>
               </div>
               {exportText && (
@@ -1082,7 +1099,15 @@ function GymAgent() {
               )}
               {showImport && (
                 <div style={{ marginTop: 10 }}>
-                  <textarea className="ga-input" placeholder="Incolla qui il testo esportato" value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} style={{ fontSize: 11 }} />
+                  <input type="file" accept="application/json,.json" style={{ marginBottom: 8, display: "block", fontSize: 12 }}
+                    onChange={(e) => {
+                      const f = e.target.files && e.target.files[0];
+                      if (!f) return;
+                      const r = new FileReader();
+                      r.onload = () => setImportText(String(r.result || ""));
+                      r.readAsText(f);
+                    }} />
+                  <textarea className="ga-input" placeholder="...oppure incolla qui il testo esportato" value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} style={{ fontSize: 11 }} />
                   <div style={{ marginTop: 6, fontSize: 12, color: "#E2572B" }}>Attenzione: sostituisce tutti i dati.</div>
                   <button className="ga-btn ga-btn-accent" style={{ marginTop: 8 }} onClick={importFromText}>Conferma importazione</button>
                 </div>

@@ -255,6 +255,37 @@ function fmtShort(iso) {
 function fmtNum(n, digits = 1) {
   return Number(n).toLocaleString(LOCALE, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
+// Peso corporeo: fino a 2 decimali (es. 72,45), almeno 1 (es. 75,0)
+function fmtKg(n) {
+  return Number(n).toLocaleString(LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+}
+// Legge un elenco incollato di pesate, una per riga: "24.08 72,45kg", "24/08/2026 72.45", ecc.
+// Senza anno: si usa l'anno corrente, o il precedente se la data cadrebbe nel futuro.
+function parseWeightList(text, todayIso) {
+  const out = [];
+  let bad = 0;
+  String(text || "").split(/\r?\n/).forEach((line) => {
+    const l = line.trim();
+    if (!l) return;
+    const m = l.match(/^(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?\s*[:;,]?\s+(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kg)?$/i);
+    if (!m) { bad++; return; }
+    const dd = +m[1], mm = +m[2];
+    const kg = parseFloat(m[4].replace(",", "."));
+    if (dd < 1 || dd > 31 || mm < 1 || mm > 12 || !(kg >= 20 && kg <= 400)) { bad++; return; }
+    let yyyy;
+    if (m[3]) yyyy = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    else {
+      yyyy = +todayIso.slice(0, 4);
+      const tryIso = `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+      if (tryIso > todayIso) yyyy -= 1;
+    }
+    const iso = `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+    const chk = new Date(iso + "T00:00:00");
+    if (isNaN(chk) || chk.getDate() !== dd) { bad++; return; }
+    out.push({ date: iso, kg: Math.round(kg * 100) / 100 });
+  });
+  return { entries: out, bad };
+}
 
 const I18N = {
   it: {
@@ -287,6 +318,8 @@ const I18N = {
     wDate: "Data", wKg: "Peso (kg)", wSave: "Salva", wUpdate: "Aggiorna", wCurrent: "Attuale", w7: "7 giorni", w30: "30 giorni", wAvg: "Media 7 gg",
     wDaily: "Pesata", r1m: "1M", r3m: "3M", rAll: "Tutto", wEmpty: "Nessuna pesata ancora: inserisci la prima qui sopra.",
     wNeedMore: "Servono almeno 2 pesate per il grafico.", wList: "Pesate", wInvalid: "Inserisci un peso valido.", wNoData: "nessun dato in questo periodo",
+    wPasteOpen: "📋 Incolla più pesate", wPastePh: "Una pesata per riga, es.\n24.08 72,45kg\n25.08 72,60kg", wPasteBtn: "Importa pesate",
+    wPasteOk: "Importate {n} pesate.", wPasteBad: "{n} righe non riconosciute e saltate.", wPasteNone: "Nessuna pesata riconosciuta.", wPasteInfo: "Le date già presenti vengono aggiornate con il nuovo valore.",
   },
   en: {
     tabToday: "📋 Today", tabHistory: "🕒 History", tabLibrary: "📚 Exercises", tabWeight: "⚖️ Weight", tabSettings: "⚙️ Settings",
@@ -318,6 +351,8 @@ const I18N = {
     wDate: "Date", wKg: "Weight (kg)", wSave: "Save", wUpdate: "Update", wCurrent: "Current", w7: "7 days", w30: "30 days", wAvg: "7-day avg",
     wDaily: "Weigh-in", r1m: "1M", r3m: "3M", rAll: "All", wEmpty: "No weigh-ins yet: add your first one above.",
     wNeedMore: "At least 2 weigh-ins are needed for the chart.", wList: "Weigh-ins", wInvalid: "Enter a valid weight.", wNoData: "no data in this period",
+    wPasteOpen: "📋 Paste multiple weigh-ins", wPastePh: "One weigh-in per line, e.g.\n24.08 72.45kg\n25.08 72.60kg", wPasteBtn: "Import weigh-ins",
+    wPasteOk: "Imported {n} weigh-ins.", wPasteBad: "{n} lines not recognized and skipped.", wPasteNone: "No weigh-ins recognized.", wPasteInfo: "Dates already present are updated with the new value.",
   },
 };
 function makeT(lang) {
@@ -556,6 +591,9 @@ function GymAgent() {
   const [wKg, setWKg] = useState("");
   const [wRange, setWRange] = useState("3m");
   const [wMsg, setWMsg] = useState(null);
+  const [wPasteOpen, setWPasteOpen] = useState(false);
+  const [wPaste, setWPaste] = useState("");
+  const [wPasteMsg, setWPasteMsg] = useState(null);
 
   // Lingua (per dispositivo)
   const [lang, setLang] = useState(() => { try { return localStorage.getItem(LANG_KEY) || "it"; } catch (e) { return "it"; } });
@@ -1010,11 +1048,23 @@ function GymAgent() {
   function saveWeight() {
     const kg = parseFloat(String(wKg).replace(",", "."));
     if (!Number.isFinite(kg) || kg < 20 || kg > 400 || !wDate) { setWMsg(t("wInvalid")); return; }
-    const next = (data.bodyWeights || []).filter((p) => p.date !== wDate).concat([{ date: wDate, kg: Math.round(kg * 10) / 10 }]);
+    const next = (data.bodyWeights || []).filter((p) => p.date !== wDate).concat([{ date: wDate, kg: Math.round(kg * 100) / 100 }]);
     persist({ ...data, bodyWeights: next });
     setWKg("");
     setWDate(todayISO());
     setWMsg(null);
+  }
+  function importWeightList() {
+    const { entries, bad } = parseWeightList(wPaste, todayISO());
+    if (entries.length === 0) { setWPasteMsg(t("wPasteNone")); return; }
+    const byDate = {};
+    (data.bodyWeights || []).forEach((p) => { byDate[p.date] = p; });
+    entries.forEach((p) => { byDate[p.date] = p; }); // l'ultima riga per data vince
+    persist({ ...data, bodyWeights: Object.values(byDate) });
+    setWPasteMsg(t("wPasteOk", { n: new Set(entries.map((p) => p.date)).size }) + (bad ? " " + t("wPasteBad", { n: bad }) : ""));
+    setWPaste("");
+    setWPasteOpen(false);
+    setWRange("all");
   }
   function deleteWeight(date) {
     persist({ ...data, bodyWeights: (data.bodyWeights || []).filter((p) => p.date !== date) });
@@ -1163,7 +1213,7 @@ function GymAgent() {
     const ref = valueOnOrBefore(bodyWeights, addDaysISO(wLast.date, -days));
     return ref ? wLast.kg - ref.kg : null;
   }
-  const fmtDelta = (d) => (d == null ? "—" : `${d > 0 ? "+" : d < 0 ? "−" : "±"}${fmtNum(Math.abs(d), 1)}`);
+  const fmtDelta = (d) => (d == null ? "—" : `${d > 0.004 ? "+" : d < -0.004 ? "−" : "±"}${fmtKg(Math.abs(d))}`);
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", background: "#121210", color: "#EDEAE0", minHeight: "100vh", padding: "0 0 40px 0" }}>
@@ -1411,6 +1461,21 @@ function GymAgent() {
               </button>
             </div>
             {wMsg && <div style={{ fontSize: 12, color: "#E2572B", marginBottom: 6 }}>{wMsg}</div>}
+            <div style={{ margin: "8px 0 4px" }}>
+              {!wPasteOpen ? (
+                <span style={{ fontSize: 12, color: "#7FC4E8", cursor: "pointer" }} onClick={() => { setWPasteOpen(true); setWPasteMsg(null); }}>{t("wPasteOpen")}</span>
+              ) : (
+                <div>
+                  <textarea className="ga-input" rows={6} placeholder={t("wPastePh")} value={wPaste} onChange={(e) => setWPaste(e.target.value)} />
+                  <div style={{ fontSize: 11, color: "#9a978c", margin: "4px 0 6px" }}>{t("wPasteInfo")}</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="ga-btn ga-btn-accent" style={{ fontSize: 13 }} onClick={importWeightList}>{t("wPasteBtn")}</button>
+                    <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => { setWPasteOpen(false); setWPaste(""); }}>{t("cancel")}</button>
+                  </div>
+                </div>
+              )}
+              {wPasteMsg && <div style={{ fontSize: 12, color: "#7FBF7F", marginTop: 6 }}>{wPasteMsg}</div>}
+            </div>
 
             {bodyWeights.length === 0 ? (
               <div style={{ color: "#9a978c", fontSize: 14, padding: "24px 0" }}>{t("wEmpty")}</div>
@@ -1419,7 +1484,7 @@ function GymAgent() {
                 <div style={{ display: "flex", gap: 8, margin: "16px 0" }}>
                   <div className="ga-stat">
                     <div style={{ fontSize: 11, color: "#9a978c" }}>{t("wCurrent")}</div>
-                    <div className="ga-mono" style={{ fontSize: 20, fontWeight: 600 }}>{fmtNum(wLast.kg, 1)}</div>
+                    <div className="ga-mono" style={{ fontSize: 20, fontWeight: 600 }}>{fmtKg(wLast.kg)}</div>
                     <div style={{ fontSize: 10, color: "#9a978c" }}>{fmtShort(wLast.date)}</div>
                   </div>
                   <div className="ga-stat">
@@ -1450,7 +1515,7 @@ function GymAgent() {
                   <div key={p.date} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #1c1c19", fontSize: 13 }}>
                     <span className="ga-mono" style={{ cursor: "pointer" }} onClick={() => onWDateChange(p.date)}>{fmtDate(p.date)}</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span className="ga-mono" style={{ cursor: "pointer" }} onClick={() => onWDateChange(p.date)}>{fmtNum(p.kg, 1)} kg</span>
+                      <span className="ga-mono" style={{ cursor: "pointer" }} onClick={() => onWDateChange(p.date)}>{fmtKg(p.kg)} kg</span>
                       <button className="ga-btn" style={{ padding: "3px 6px", fontSize: 12 }} onClick={() => deleteWeight(p.date)}>🗑</button>
                     </span>
                   </div>

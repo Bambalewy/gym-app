@@ -227,61 +227,133 @@ const DEFAULT_SESSIONS = [
 ]; // storico inserito come sessioni normali: nessun flag "seed", modificabili ed eliminabili come le altre
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
-function round(n) { return Math.round(n * 2) / 2; }
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+function todayISO() {
+  // data locale (non UTC): evita che dopo mezzanotte UTC risulti il giorno sbagliato
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function addDaysISO(iso, n) {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/* =========================================================
+   LINGUA (solo interfaccia: i testi scritti dall'utente non cambiano)
+   ========================================================= */
+const LANG_KEY = "bbgym-lang"; // per dispositivo, NON sincronizzato su Drive
+let LOCALE = "it-IT";
+
 function fmtDate(iso) {
   const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return d.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", year: "numeric" });
 }
-function fmtDateTime(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  const sameDay = d.toDateString() === new Date().toDateString();
-  const time = d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? `oggi alle ${time}` : `${d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit" })} alle ${time}`;
+function fmtShort(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" });
+}
+function fmtNum(n, digits = 1) {
+  return Number(n).toLocaleString(LOCALE, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-function computeSuggestion(exercise, sessions, phase) {
-  if (exercise.type !== "weight") {
-    return { text: "Confronta con l'ultima volta e prova a migliorare leggermente (peso, ripetizioni o tempo).", weight: null, reps: null };
-  }
-  const range = phase === "massa" ? exercise.rangeMassa : exercise.rangeForza;
-  const history = sessions
-    .filter((s) => s.entries.some((e) => e.exerciseId === exercise.id))
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  if (history.length === 0) {
-    return { text: `Prima volta: scegli un peso con cui arrivi a ${range[0]}-${range[1]} ripetizioni per ${exercise.defaultSets || 3} serie.`, weight: null, reps: range[0], sets: exercise.defaultSets || 3 };
-  }
-  const last = history[0].entries.find((e) => e.exerciseId === exercise.id);
-  // Guardia: una entry storica a peso potrebbe avere 0 set validi (dati vecchi/importati).
-  // Senza questo controllo Math.max(...[]) restituirebbe -Infinity e romperebbe il suggerimento.
-  if (!last.sets || last.sets.length === 0) {
-    return { text: `Nessun dato utilizzabile nell'ultima sessione: scegli un peso con cui arrivi a ${range[0]}-${range[1]} ripetizioni.`, weight: null, reps: range[0], sets: exercise.defaultSets || 3 };
-  }
-  const workingWeight = Math.max(...last.sets.map((s) => s.weight));
-  const setsAtWeight = last.sets.filter((s) => s.weight === workingWeight);
-  const allTop = setsAtWeight.length > 0 && setsAtWeight.every((s) => s.reps >= range[1]);
-
-  if (allTop) {
-    const newWeight = round(workingWeight + exercise.increment);
-    return { text: `Hai raggiunto il top del range (${range[1]} reps): sali a ${newWeight}${exercise.unit} e riparti da ${range[0]} reps.`, weight: newWeight, reps: range[0], sets: last.sets.length };
-  }
-  const second = history[1] && history[1].entries.find((e) => e.exerciseId === exercise.id);
-  if (second) {
-    const secondWeight = Math.max(...second.sets.map((s) => s.weight));
-    const secondSetsAtWeight = second.sets.filter((s) => s.weight === secondWeight);
-    const lastTotal = setsAtWeight.reduce((a, s) => a + s.reps, 0);
-    const secondTotal = secondSetsAtWeight.reduce((a, s) => a + s.reps, 0);
-    if (secondWeight === workingWeight && lastTotal <= secondTotal) {
-      const deloadWeight = round(workingWeight * 0.9);
-      return { text: `Nessun progresso nelle ultime 2 sessioni a ${workingWeight}${exercise.unit}: scarico a ${deloadWeight}${exercise.unit}.`, weight: deloadWeight, reps: range[0], sets: last.sets.length };
-    }
-  }
-  const maxRepsLast = Math.max(...setsAtWeight.map((s) => s.reps));
-  const targetReps = Math.min(maxRepsLast + 1, range[1]);
-  return { text: `Resta a ${workingWeight}${exercise.unit}: prova ad arrivare a ${targetReps} reps (range ${range[0]}-${range[1]}).`, weight: workingWeight, reps: targetReps, sets: last.sets.length };
+const I18N = {
+  it: {
+    tabToday: "📋 Oggi", tabHistory: "🕒 Storico", tabLibrary: "📚 Esercizi", tabWeight: "⚖️ Peso", tabSettings: "⚙️ Impostazioni",
+    syncOffline: "non collegato a Google", syncSyncing: "sincronizzazione...", syncSynced: "sincronizzato con Drive", syncError: "errore di sincronizzazione",
+    syncNoticeOverwritten: "Su Drive c'erano dati piu recenti: questo dispositivo e stato aggiornato. Eventuali modifiche fatte offline qui potrebbero essere state sostituite.",
+    workoutDate: "Data allenamento", addExercise: "➕ Aggiungi esercizio", noExercises: "Nessun esercizio selezionato.",
+    replaceTitle: "Sostituisci esercizio", replaceHint: "Scegli il nuovo esercizio: resta in questa posizione e i valori già inseriti vengono mantenuti.",
+    cancelReplace: "Annulla sostituzione",
+    weightCol: "Peso ({u})", weightShort: "Peso", repsCol: "Reps", dropWeightCol: "↓ Drop",
+    addSet: "+ serie", applyFirst: "📋 Applica 1ª serie a tutte",
+    notePh: "Nota (facoltativa, es. sensazioni, tecnica...)", otherPh: "es. 3x15, oppure 2 min",
+    savePartial: "💾 Salva parziale (continua)", saveFinal: "✅ Salva allenamento",
+    superset: "Superset", dropset: "Drop set", pairWith: "+ in coppia con", choose: "— scegli esercizio —",
+    lastTime: "Ultima volta ({d}): {s}", firstTime: "Prima volta per questo esercizio",
+    prevNotes: "📝 Note precedenti", showMore: "mostra altre ({n})", hide: "nascondi",
+    seeTrend: "Vedi andamento esercizio:", allSessions: "-- tutte le sessioni --", thDate: "Data", thSets: "Serie",
+    noHistoryEx: "Nessuno storico per questo esercizio.", noWorkouts: "Ancora nessun allenamento registrato.",
+    nExercises: "{n} esercizi", edit: "Modifica", duplicate: "📋 Duplica (oggi)", del: "🗑 Elimina",
+    noHistory: "Nessuno storico.", free: "libero",
+    newCustom: "➕ Nuovo esercizio personalizzato", exNamePh: "Nome esercizio", typeWeight: "A peso", typeOther: "Libero (reps/tempo)",
+    unitPh: "Unità di misura (es. kg, lb, kg/lato)", createReplace: "Crea e sostituisci", createAdd: "Crea e aggiungi", cancel: "Annulla",
+    driveTitle: "Sincronizzazione Google Drive", signIn: "🔐 Accedi con Google",
+    driveInfo: "I dati vengono salvati in una cartella riservata all'app nel tuo Google Drive, non visibile tra i tuoi file normali. Accedendo con lo stesso account da un altro dispositivo, i dati si sincronizzano automaticamente.",
+    backupTitle: "Backup manuale (paracadute extra)", exportBackup: "⬇️ Esporta backup (file)", importData: "Importa dati",
+    importPh: "...oppure incolla qui il testo esportato", importWarn: "Attenzione: sostituisce tutti i dati.", importConfirm: "Conferma importazione",
+    importInvalid: "Formato non valido.", importOk: "Importazione riuscita: {n} sessioni caricate.", importUnrecognized: "Testo non riconosciuto.",
+    languageTitle: "Lingua", languageInfo: "Cambia menu e testi dell'app, non quello che hai scritto tu. Vale solo per questo dispositivo.",
+    dataTitle: "Dati", resetAll: "🗑 Cancella tutti i dati", resetMsg: "Sicuro? Verranno rimossi anche gli esercizi personalizzati e le pesate. Non si può annullare.", confirm: "Conferma",
+    wDate: "Data", wKg: "Peso (kg)", wSave: "Salva", wUpdate: "Aggiorna", wCurrent: "Attuale", w7: "7 giorni", w30: "30 giorni", wAvg: "Media 7 gg",
+    wDaily: "Pesata", r1m: "1M", r3m: "3M", rAll: "Tutto", wEmpty: "Nessuna pesata ancora: inserisci la prima qui sopra.",
+    wNeedMore: "Servono almeno 2 pesate per il grafico.", wList: "Pesate", wInvalid: "Inserisci un peso valido.", wNoData: "nessun dato in questo periodo",
+  },
+  en: {
+    tabToday: "📋 Today", tabHistory: "🕒 History", tabLibrary: "📚 Exercises", tabWeight: "⚖️ Weight", tabSettings: "⚙️ Settings",
+    syncOffline: "not connected to Google", syncSyncing: "syncing...", syncSynced: "synced with Drive", syncError: "sync error",
+    syncNoticeOverwritten: "Drive had newer data: this device has been updated. Any changes made offline here may have been replaced.",
+    workoutDate: "Workout date", addExercise: "➕ Add exercise", noExercises: "No exercises selected.",
+    replaceTitle: "Replace exercise", replaceHint: "Pick the new exercise: it keeps this position and the values already entered.",
+    cancelReplace: "Cancel replace",
+    weightCol: "Weight ({u})", weightShort: "Weight", repsCol: "Reps", dropWeightCol: "↓ Drop",
+    addSet: "+ set", applyFirst: "📋 Apply set 1 to all",
+    notePh: "Note (optional, e.g. feel, technique...)", otherPh: "e.g. 3x15, or 2 min",
+    savePartial: "💾 Save progress (continue)", saveFinal: "✅ Save workout",
+    superset: "Superset", dropset: "Drop set", pairWith: "+ paired with", choose: "— choose exercise —",
+    lastTime: "Last time ({d}): {s}", firstTime: "First time doing this exercise",
+    prevNotes: "📝 Previous notes", showMore: "show more ({n})", hide: "hide",
+    seeTrend: "Exercise progress:", allSessions: "-- all sessions --", thDate: "Date", thSets: "Sets",
+    noHistoryEx: "No history for this exercise.", noWorkouts: "No workouts logged yet.",
+    nExercises: "{n} exercises", edit: "Edit", duplicate: "📋 Duplicate (today)", del: "🗑 Delete",
+    noHistory: "No history.", free: "free",
+    newCustom: "➕ New custom exercise", exNamePh: "Exercise name", typeWeight: "Weighted", typeOther: "Free (reps/time)",
+    unitPh: "Unit (e.g. kg, lb, kg/side)", createReplace: "Create and replace", createAdd: "Create and add", cancel: "Cancel",
+    driveTitle: "Google Drive sync", signIn: "🔐 Sign in with Google",
+    driveInfo: "Your data is saved in an app-only folder in your Google Drive, hidden from your normal files. Sign in with the same account on another device and your data syncs automatically.",
+    backupTitle: "Manual backup (extra safety net)", exportBackup: "⬇️ Export backup (file)", importData: "Import data",
+    importPh: "...or paste the exported text here", importWarn: "Warning: this replaces all data.", importConfirm: "Confirm import",
+    importInvalid: "Invalid format.", importOk: "Import successful: {n} sessions loaded.", importUnrecognized: "Text not recognized.",
+    languageTitle: "Language", languageInfo: "Changes the app's menus and labels, not what you wrote. Applies to this device only.",
+    dataTitle: "Data", resetAll: "🗑 Delete all data", resetMsg: "Are you sure? Custom exercises and weigh-ins will be removed too. This can't be undone.", confirm: "Confirm",
+    wDate: "Date", wKg: "Weight (kg)", wSave: "Save", wUpdate: "Update", wCurrent: "Current", w7: "7 days", w30: "30 days", wAvg: "7-day avg",
+    wDaily: "Weigh-in", r1m: "1M", r3m: "3M", rAll: "All", wEmpty: "No weigh-ins yet: add your first one above.",
+    wNeedMore: "At least 2 weigh-ins are needed for the chart.", wList: "Weigh-ins", wInvalid: "Enter a valid weight.", wNoData: "no data in this period",
+  },
+};
+function makeT(lang) {
+  return (key, params) => {
+    let s = (I18N[lang] && I18N[lang][key]) ?? I18N.it[key] ?? key;
+    if (params) Object.keys(params).forEach((p) => { s = s.split(`{${p}}`).join(params[p]); });
+    return s;
+  };
 }
+
+const CATEGORY_EN = { Petto: "Chest", Spalle: "Shoulders", Dorso: "Back", Bicipiti: "Biceps", Tricipiti: "Triceps", Gambe: "Legs", Core: "Core" };
+const EXERCISE_EN = {
+  "spinte-piana": "Flat dumbbell press", "panca-inclinata": "Incline barbell bench press", "croci-cavi": "Cable flyes (high/low)",
+  "spinte-spalle": "Dumbbell shoulder press", "alzate-laterali": "Dumbbell lateral raises", "alzate-posteriori": "Dumbbell rear delt raises",
+  "alzate-cavi": "Cable lateral raises", "lat-machine": "Lat pulldown", "pulley-basso": "Seated cable row",
+  "rematore": "Row (dumbbell/barbell/machine)", "t-bar": "T-bar row", "curl-bici": "Dumbbell biceps curl",
+  "curl-z": "EZ-bar curl (weight per side)", "curl-corde": "Cable rope curl", "curl-ruotati": "Rotating curl (supinated -> hammer)",
+  "french-press": "EZ-bar skull crusher (weight per side)", "estensioni-cavo-basso": "Low cable triceps extension",
+  "push-con-corde": "Rope pushdown (high cable)", "leg-press-45": "45° leg press", "leg-press-orizz": "Horizontal leg press",
+  "leg-curl": "Lying leg curl", "leg-curl-seduto": "Seated leg curl", "stacco-rumeno": "Romanian deadlift", "squat": "Squat",
+  "calf-pressa": "Calf raises on leg press", "abs-crunch": "Ab crunch",
+};
+const LABEL_EN = { "Sdraiato": "Lying", "Seduto": "Seated", "Orizzontale": "Horizontal", "kg/lato": "kg/side" };
+
+/* =========================================================
+   SERIE: normale / drop set / superset
+   ========================================================= */
+// Formatta le serie di una entry salvata: "28x8 / 28x8" oppure "10x10↘6x10" per i drop set.
+function fmtSets(entry) {
+  if (!entry || !Array.isArray(entry.sets)) return entry && entry.note ? entry.note : "";
+  return entry.sets.map((s) => {
+    const base = `${s.weight}x${s.reps}`;
+    return s.dropWeight != null && s.dropReps != null ? `${base}↘${s.dropWeight}x${s.dropReps}` : base;
+  }).join(" / ");
+}
+const str = (v) => (v == null ? "" : String(v));
 
 /* =========================================================
    STORAGE LOCALE (sempre attivo, offline-first)
@@ -311,7 +383,7 @@ function loadLocal() {
       return parsed;
     }
   } catch (e) {}
-  return { schemaVersion: SCHEMA_VERSION, phase: "massa", exercises: DEFAULT_EXERCISES, sessions: DEFAULT_SESSIONS, updatedAt: 0 };
+  return { schemaVersion: SCHEMA_VERSION, phase: "massa", exercises: DEFAULT_EXERCISES, sessions: DEFAULT_SESSIONS, bodyWeights: [], updatedAt: 0 };
 }
 function saveLocal(data) {
   try { localStorage.setItem(LOCAL_KEY, JSON.stringify(data)); } catch (e) {}
@@ -388,6 +460,67 @@ async function driveGetContent(token, fileId) {
 }
 
 /* =========================================================
+   PESO CORPOREO: media mobile + grafico SVG (nessuna libreria, funziona offline)
+   ========================================================= */
+// Media mobile a 7 giorni di calendario (non 7 pesate): per ogni pesata, media delle pesate negli ultimi 7 giorni.
+function movingAvg7(sortedAsc) {
+  return sortedAsc.map((p) => {
+    const from = addDaysISO(p.date, -6);
+    const win = sortedAsc.filter((q) => q.date >= from && q.date <= p.date);
+    return { date: p.date, kg: win.reduce((a, q) => a + q.kg, 0) / win.length };
+  });
+}
+// Valore della pesata più recente con data <= iso (null se non c'è).
+function valueOnOrBefore(sortedAsc, iso) {
+  let v = null;
+  sortedAsc.forEach((p) => { if (p.date <= iso) v = p; });
+  return v;
+}
+
+function WeightChart({ points, avg, t }) {
+  const W = 600, H = 240, L = 40, R = 12, T = 12, B = 26;
+  if (points.length < 2) {
+    return <div style={{ fontSize: 12, color: "#9a978c", padding: "24px 0", textAlign: "center" }}>{t("wNeedMore")}</div>;
+  }
+  const ms = (iso) => new Date(iso + "T00:00:00").getTime();
+  const x0 = ms(points[0].date), x1 = ms(points[points.length - 1].date);
+  const all = points.map((p) => p.kg).concat(avg.map((p) => p.kg));
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (hi - lo < 1) { const mid = (hi + lo) / 2; lo = mid - 0.5; hi = mid + 0.5; }
+  const pad = (hi - lo) * 0.1;
+  lo -= pad; hi += pad;
+  const sx = (iso) => L + (x1 === x0 ? 0.5 : (ms(iso) - x0) / (x1 - x0)) * (W - L - R);
+  const sy = (kg) => T + (1 - (kg - lo) / (hi - lo)) * (H - T - B);
+  const ticks = [0, 1, 2, 3].map((i) => lo + ((hi - lo) * i) / 3);
+  const path = (arr) => arr.map((p, i) => `${i ? "L" : "M"}${sx(p.date).toFixed(1)},${sy(p.kg).toFixed(1)}`).join(" ");
+  const midIdx = Math.floor(points.length / 2);
+  const xLabels = [points[0], points[midIdx], points[points.length - 1]].filter((p, i, a) => a.findIndex((q) => q.date === p.date) === i);
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="weight chart">
+        {ticks.map((v, i) => (
+          <g key={i}>
+            <line x1={L} x2={W - R} y1={sy(v)} y2={sy(v)} stroke="#26241f" strokeWidth="1" />
+            <text x={L - 6} y={sy(v) + 4} textAnchor="end" fontSize="11" fill="#9a978c" fontFamily="monospace">{fmtNum(v, 1)}</text>
+          </g>
+        ))}
+        {xLabels.map((p, i) => (
+          <text key={p.date} x={sx(p.date)} y={H - 6} fontSize="11" fill="#9a978c" fontFamily="monospace"
+            textAnchor={i === 0 ? "start" : (i === xLabels.length - 1 ? "end" : "middle")}>{fmtShort(p.date)}</text>
+        ))}
+        <path d={path(points)} fill="none" stroke="#5c5a50" strokeWidth="1.5" />
+        {points.map((p) => <circle key={p.date} cx={sx(p.date)} cy={sy(p.kg)} r={points.length > 60 ? 1.8 : 3} fill="#9a978c" />)}
+        <path d={path(avg)} fill="none" stroke="#D6E24B" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+      <div style={{ display: "flex", gap: 16, fontSize: 11, color: "#9a978c", marginTop: 4 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#9a978c", display: "inline-block" }}></span>{t("wDaily")}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 16, height: 3, borderRadius: 2, background: "#D6E24B", display: "inline-block" }}></span>{t("wAvg")}</span>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    APP
    ========================================================= */
 function GymAgent() {
@@ -400,6 +533,8 @@ function GymAgent() {
   const [sessionDate, setSessionDate] = useState(todayISO());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [today, setToday] = useState({});
+  const [editingId, setEditingId] = useState(null); // sessione in modifica (esclusa da "ultima volta" e note precedenti)
+  const [openNotes, setOpenNotes] = useState({}); // quali box "note precedenti" sono espansi
   const [newExOpen, setNewExOpen] = useState(false);
   const [replacingId, setReplacingId] = useState(null); // id esercizio in fase di sostituzione
   const [newExName, setNewExName] = useState("");
@@ -415,6 +550,25 @@ function GymAgent() {
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [importMsg, setImportMsg] = useState(null);
+
+  // Peso corporeo
+  const [wDate, setWDate] = useState(todayISO());
+  const [wKg, setWKg] = useState("");
+  const [wRange, setWRange] = useState("3m");
+  const [wMsg, setWMsg] = useState(null);
+
+  // Lingua (per dispositivo)
+  const [lang, setLang] = useState(() => { try { return localStorage.getItem(LANG_KEY) || "it"; } catch (e) { return "it"; } });
+  LOCALE = lang === "en" ? "en-GB" : "it-IT";
+  const t = useMemo(() => makeT(lang), [lang]);
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
+  function changeLang(l) {
+    setLang(l);
+    try { localStorage.setItem(LANG_KEY, l); } catch (e) {}
+  }
+  const exName = (ex) => (ex ? (lang === "en" && EXERCISE_EN[ex.id] ? EXERCISE_EN[ex.id] : ex.name) : "");
+  const catName = (c) => (lang === "en" ? CATEGORY_EN[c] || c : c);
+  const lbl = (s) => (lang === "en" && LABEL_EN[s] ? LABEL_EN[s] : s);
 
   const dataRef = useRef(data);
   dataRef.current = data;
@@ -458,9 +612,7 @@ function GymAgent() {
         // Se il locale non era "vuoto/default" e viene comunque sostituito, avvisa:
         // con modifiche offline su piu device uno dei due set puo essere perso.
         const localHadEdits = (local.updatedAt || 0) > 0;
-        if (localHadEdits) {
-          setSyncNotice("Su Drive c'erano dati piu recenti: questo dispositivo e stato aggiornato. Eventuali modifiche fatte offline qui potrebbero essere state sostituite.");
-        }
+        if (localHadEdits) setSyncNotice("overwritten");
         if (remote.schemaVersion == null) remote.schemaVersion = SCHEMA_VERSION;
         setData(remote);
         saveLocal(remote);
@@ -496,6 +648,35 @@ function GymAgent() {
     () => Object.fromEntries(data.exercises.map((e) => [e.id, e])),
     [data.exercises]
   );
+
+  // Sessioni "passate" rispetto a quella che si sta compilando (esclude quella in modifica).
+  const pastSessions = useMemo(
+    () => sortedSessions.filter((s) => s.id !== editingId),
+    [sortedSessions, editingId]
+  );
+  function lastEntryOf(exId) {
+    for (const s of pastSessions) {
+      const e = s.entries.find((x) => x.exerciseId === exId && (!Array.isArray(x.sets) || x.sets.length > 0));
+      if (e) return { date: s.date, entry: e };
+    }
+    return null;
+  }
+  function previousNotes(exId) {
+    const out = [];
+    pastSessions.forEach((s) => {
+      s.entries.forEach((e) => {
+        if (e.exerciseId === exId && e.note && String(e.note).trim()) out.push({ date: s.date, note: e.note });
+      });
+    });
+    return out;
+  }
+
+  // Esercizi già impegnati oggi (come card o come secondo esercizio di un superset)
+  const usedToday = useMemo(() => {
+    const u = new Set(Object.keys(today));
+    Object.values(today).forEach((e) => { if (e && e.mode === "superset" && e.pairId) u.add(e.pairId); });
+    return u;
+  }, [today]);
 
   function lastUsedVariantId(groupExercises) {
     let bestId = groupExercises[0].id;
@@ -542,47 +723,59 @@ function GymAgent() {
     persist({ ...data, sessions: data.sessions.filter((s) => s.id !== sessionId) });
   }
 
-  function duplicateSession(session) {
-    const newToday = {};
-    session.entries.forEach((entry) => {
+  // Converte le entry salvate di una sessione nelle card di "Oggi".
+  // I superset salvati come 2 entry collegate tornano a essere una sola card.
+  function entriesToToday(entries, keepNotes) {
+    const out = {};
+    entries.forEach((entry) => {
       const ex = exercisesById[entry.exerciseId];
       if (!ex) return;
-      const sug = computeSuggestion(ex, data.sessions, data.phase);
-      if (ex.type === "weight") {
-        newToday[entry.exerciseId] = {
-          sets: entry.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
-          note: "", suggestion: sug,
-        };
-      } else {
-        newToday[entry.exerciseId] = { note: "", suggestion: sug };
+      // seconda metà di un superset: viene fusa nella card del primo esercizio
+      if (entry.supersetOf && entries.some((e) => e.exerciseId === entry.supersetOf && e.superset === entry.exerciseId) && exercisesById[entry.supersetOf]) return;
+      if (ex.type !== "weight") {
+        out[entry.exerciseId] = { note: keepNotes ? entry.note || "" : "" };
+        return;
       }
+      let mode = entry.drop ? "drop" : null;
+      let pairId = null;
+      let sets = null;
+      if (entry.superset) {
+        const partner = entries.find((e) => e.exerciseId === entry.superset);
+        if (partner && exercisesById[partner.exerciseId]) {
+          mode = "superset";
+          pairId = partner.exerciseId;
+          const a = entry.sets || [], b = partner.sets || [];
+          const n = Math.max(a.length, b.length);
+          sets = Array.from({ length: n }, (_, i) => ({
+            weight: str(a[i] && a[i].weight), reps: str(a[i] && a[i].reps),
+            weight2: str(b[i] && b[i].weight), reps2: str(b[i] && b[i].reps),
+          }));
+        }
+      }
+      if (!sets) {
+        sets = (entry.sets || []).map((s) => ({ weight: str(s.weight), reps: str(s.reps), weight2: str(s.dropWeight), reps2: str(s.dropReps) }));
+      }
+      out[entry.exerciseId] = { sets, note: keepNotes ? entry.note || "" : "", mode, pairId };
     });
+    return out;
+  }
+
+  function duplicateSession(session) {
     currentSessionIdRef.current = null;
-    setToday(newToday);
+    setEditingId(null);
+    setToday(entriesToToday(session.entries, false)); // note nuove vuote: le vecchie si vedono in "Note precedenti"
+    setOpenNotes({});
     setSessionDate(todayISO());
     setTab("log");
   }
 
   function editSession(session) {
-    const newToday = {};
-    session.entries.forEach((entry) => {
-      const ex = exercisesById[entry.exerciseId];
-      if (!ex) return;
-      const remaining = data.sessions.filter((s) => s.id !== session.id);
-      const sug = computeSuggestion(ex, remaining, data.phase);
-      if (ex.type === "weight") {
-        newToday[entry.exerciseId] = {
-          sets: entry.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps) })),
-          note: entry.note || "", suggestion: sug,
-        };
-      } else {
-        newToday[entry.exerciseId] = { note: entry.note || "", suggestion: sug };
-      }
-    });
     // Fix: non cancelliamo piu la sessione qui (evita doppio persist sullo stesso
     // snapshot di `data`). Teniamo l'id: saveSession fara' l'update in-place.
     currentSessionIdRef.current = session.id;
-    setToday(newToday);
+    setEditingId(session.id);
+    setToday(entriesToToday(session.entries, true));
+    setOpenNotes({});
     setSessionDate(session.date);
     setTab("log");
   }
@@ -592,7 +785,7 @@ function GymAgent() {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const d = new Date().toISOString().slice(0, 10);
+      const d = todayISO();
       a.href = url;
       a.download = `bbgym-backup-${d}.json`;
       document.body.appendChild(a);
@@ -609,61 +802,59 @@ function GymAgent() {
     try {
       const parsed = JSON.parse(importText.trim());
       if (!parsed || !Array.isArray(parsed.sessions) || !Array.isArray(parsed.exercises)) {
-        setImportMsg("Formato non valido.");
+        setImportMsg(t("importInvalid"));
         return;
       }
       parsed.exercises = mergeExerciseLibrary(parsed.exercises);
       persist(parsed);
-      setImportMsg("Importazione riuscita: " + parsed.sessions.length + " sessioni caricate.");
+      setImportMsg(t("importOk", { n: parsed.sessions.length }));
       setImportText("");
       setShowImport(false);
     } catch (e) {
-      setImportMsg("Testo non riconosciuto.");
+      setImportMsg(t("importUnrecognized"));
     }
   }
 
+  // Nuova card: precompilata con l'ultima volta (se esiste), con promemoria "Ultima volta".
+  function newCardFor(ex) {
+    const last = lastEntryOf(ex.id);
+    if (last) {
+      const built = entriesToToday([last.entry], false)[ex.id];
+      if (built) return { ...built, showLast: true };
+    }
+    return ex.type === "weight"
+      ? { sets: Array.from({ length: ex.defaultSets || 3 }, () => ({ weight: "", reps: "", weight2: "", reps2: "" })), note: "", mode: null, pairId: null, showLast: true }
+      : { note: "", showLast: true };
+  }
+
   function addExerciseToToday(ex) {
-    const sug = computeSuggestion(ex, data.sessions, data.phase);
-    const nSets = sug.sets || ex.defaultSets || 3;
-    setToday((t) => ({
-      ...t,
-      [ex.id]: ex.type === "weight"
-        ? { sets: Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })), note: "", suggestion: sug }
-        : { note: "", suggestion: sug },
-    }));
+    setToday((t0) => ({ ...t0, [ex.id]: newCardFor(ex) }));
     setPickerOpen(false);
   }
 
   // Sostituisce un esercizio MANTENENDO la sua posizione nella sequenza di oggi.
-  // I valori già inseriti (peso/reps/nota) vengono conservati; il suggerimento
-  // viene ricalcolato sullo storico del NUOVO esercizio.
+  // I valori già inseriti (peso/reps/nota) vengono conservati; compare "Ultima volta" del nuovo esercizio.
   function replaceExerciseInToday(oldId, newEx) {
-    setToday((t) => {
-      if (!t[oldId]) return t;
-      if (oldId === newEx.id) return t;
-      if (t[newEx.id]) return t; // il nuovo esercizio è già in sessione: non lo duplico
-      const oldEntry = t[oldId];
+    setToday((t0) => {
+      if (!t0[oldId]) return t0;
+      if (oldId === newEx.id) return t0;
+      if (t0[newEx.id]) return t0; // il nuovo esercizio è già in sessione: non lo duplico
+      const oldEntry = t0[oldId];
       const oldEx = exercisesById[oldId];
-      const sug = computeSuggestion(newEx, data.sessions, data.phase);
       let newEntry;
       if (newEx.type === "weight") {
-        const kept = oldEx && oldEx.type === "weight" && Array.isArray(oldEntry.sets) ? oldEntry.sets : null;
-        const nSets = sug.sets || newEx.defaultSets || 3;
-        newEntry = {
-          sets: kept && kept.length
-            ? kept.map((s) => ({ weight: s.weight, reps: s.reps }))
-            : Array.from({ length: nSets }, () => ({ weight: sug.weight ?? "", reps: sug.reps ?? "" })),
-          note: oldEntry.note || "",
-          suggestion: sug,
-        };
+        const kept = oldEx && oldEx.type === "weight" && Array.isArray(oldEntry.sets) && oldEntry.sets.length ? oldEntry.sets : null;
+        newEntry = kept
+          ? { sets: kept.map((s) => ({ ...s })), note: oldEntry.note || "", mode: oldEntry.mode || null, pairId: oldEntry.pairId === newEx.id ? null : oldEntry.pairId || null, showLast: true }
+          : { ...newCardFor(newEx), note: oldEntry.note || "" };
       } else {
-        newEntry = { note: oldEntry.note || "", suggestion: sug };
+        newEntry = { note: oldEntry.note || "", showLast: true };
       }
       // Ricostruisco l'oggetto preservando l'ordine delle chiavi: la card resta al suo posto.
       const next = {};
-      Object.keys(t).forEach((k) => {
+      Object.keys(t0).forEach((k) => {
         if (k === oldId) next[newEx.id] = newEntry;
-        else next[k] = t[k];
+        else next[k] = t0[k];
       });
       return next;
     });
@@ -691,77 +882,142 @@ function GymAgent() {
   }
 
   function removeExerciseFromToday(id) {
-    setToday((t) => { const n = { ...t }; delete n[id]; return n; });
+    setToday((t0) => { const n = { ...t0 }; delete n[id]; return n; });
   }
   function updateSet(exId, idx, field, val) {
-    setToday((t) => {
-      const entry = { ...t[exId] };
+    setToday((t0) => {
+      const entry = { ...t0[exId] };
       const sets = entry.sets.slice();
       sets[idx] = { ...sets[idx], [field]: val };
       entry.sets = sets;
-      return { ...t, [exId]: entry };
+      return { ...t0, [exId]: entry };
     });
   }
   function addSetRow(exId) {
-    setToday((t) => { const entry = { ...t[exId] }; entry.sets = [...entry.sets, { weight: "", reps: "" }]; return { ...t, [exId]: entry }; });
+    setToday((t0) => { const entry = { ...t0[exId] }; entry.sets = [...entry.sets, { weight: "", reps: "", weight2: "", reps2: "" }]; return { ...t0, [exId]: entry }; });
   }
   function applyFirstToAll(exId) {
-    setToday((t) => {
-      const entry = { ...t[exId] };
+    setToday((t0) => {
+      const entry = { ...t0[exId] };
       const first = entry.sets[0];
-      if (!first || first.weight === "" || first.reps === "") return t;
-      entry.sets = entry.sets.map(() => ({ weight: first.weight, reps: first.reps }));
-      return { ...t, [exId]: entry };
+      if (!first || first.weight === "" || first.reps === "") return t0;
+      entry.sets = entry.sets.map(() => ({ weight: first.weight, reps: first.reps, weight2: first.weight2 || "", reps2: first.reps2 || "" }));
+      return { ...t0, [exId]: entry };
     });
   }
   function removeSetRow(exId, idx) {
-    setToday((t) => { const entry = { ...t[exId] }; entry.sets = entry.sets.filter((_, i) => i !== idx); return { ...t, [exId]: entry }; });
+    setToday((t0) => { const entry = { ...t0[exId] }; entry.sets = entry.sets.filter((_, i) => i !== idx); return { ...t0, [exId]: entry }; });
   }
   function updateNote(exId, val) {
-    setToday((t) => ({ ...t, [exId]: { ...t[exId], note: val } }));
+    setToday((t0) => ({ ...t0, [exId]: { ...t0[exId], note: val } }));
+  }
+  // Interruttori Drop set / Superset (si escludono a vicenda)
+  function toggleMode(exId, m) {
+    setToday((t0) => {
+      const entry = { ...t0[exId] };
+      entry.mode = entry.mode === m ? null : m;
+      if (entry.mode !== "superset") entry.pairId = null;
+      return { ...t0, [exId]: entry };
+    });
+  }
+  function setPair(exId, pairId) {
+    setToday((t0) => ({ ...t0, [exId]: { ...t0[exId], pairId: pairId || null } }));
   }
 
   function saveSession(final) {
     const ids = Object.keys(today);
     if (ids.length === 0) return;
-    const entries = ids.map((exId) => {
+    const validPair = (w, r) => Number.isFinite(w) && Number.isFinite(r) && r > 0;
+    const entries = [];
+    ids.forEach((exId) => {
       const ex = exercisesById[exId];
       const entry = today[exId];
-      if (ex.type === "weight") {
-        return {
-          exerciseId: exId,
-          note: entry.note || "",
-          // Fix 4: valida i numeri (parseFloat("-") o "1.2.3" -> NaN) e scarta i set invalidi.
-          sets: entry.sets
-            .map((s) => ({ weight: parseFloat(s.weight), reps: parseInt(s.reps, 10) }))
-            .filter((s) => Number.isFinite(s.weight) && Number.isFinite(s.reps) && s.reps > 0),
-        };
+      if (!ex) return;
+      if (ex.type !== "weight") {
+        entries.push({ exerciseId: exId, note: entry.note });
+        return;
       }
-      return { exerciseId: exId, note: entry.note };
-    })
-    // Fix 2: non salvare entry a peso rimaste senza alcun set valido
-    // (altrimenti sets:[] manda in tilt computeSuggestion con Math.max su array vuoto).
-    .filter((e) => {
+      // Fix 4: valida i numeri (parseFloat("-") o "1.2.3" -> NaN) e scarta i set invalidi.
+      const parsed = entry.sets.map((s) => ({
+        weight: parseFloat(s.weight), reps: parseInt(s.reps, 10),
+        weight2: parseFloat(s.weight2), reps2: parseInt(s.reps2, 10),
+      }));
+      if (entry.mode === "drop") {
+        entries.push({
+          exerciseId: exId, note: entry.note || "", drop: true,
+          sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => (
+            validPair(s.weight2, s.reps2)
+              ? { weight: s.weight, reps: s.reps, dropWeight: s.weight2, dropReps: s.reps2 }
+              : { weight: s.weight, reps: s.reps }
+          )),
+        });
+      } else if (entry.mode === "superset" && entry.pairId && exercisesById[entry.pairId] && !today[entry.pairId]) {
+        // Salvato come 2 entry collegate: storico e "ultima volta" restano separati per esercizio.
+        entries.push({
+          exerciseId: exId, note: entry.note || "", superset: entry.pairId,
+          sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => ({ weight: s.weight, reps: s.reps })),
+        });
+        entries.push({
+          exerciseId: entry.pairId, note: "", supersetOf: exId,
+          sets: parsed.filter((s) => validPair(s.weight2, s.reps2)).map((s) => ({ weight: s.weight2, reps: s.reps2 })),
+        });
+      } else {
+        entries.push({
+          exerciseId: exId, note: entry.note || "",
+          sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => ({ weight: s.weight, reps: s.reps })),
+        });
+      }
+    });
+    // Fix 2: non salvare entry a peso rimaste senza alcun set valido.
+    const cleaned = entries.filter((e) => {
       const ex = exercisesById[e.exerciseId];
       return !(ex && ex.type === "weight" && e.sets.length === 0);
     });
-    if (entries.length === 0) return;
+    if (cleaned.length === 0) return;
     const existingId = currentSessionIdRef.current;
     let nextSessions;
     if (existingId && data.sessions.some((s) => s.id === existingId)) {
-      nextSessions = data.sessions.map((s) => (s.id === existingId ? { id: existingId, date: sessionDate, entries } : s));
+      nextSessions = data.sessions.map((s) => (s.id === existingId ? { id: existingId, date: sessionDate, entries: cleaned } : s));
     } else {
       const newId = uid();
       currentSessionIdRef.current = newId;
-      nextSessions = [...data.sessions, { id: newId, date: sessionDate, entries }];
+      nextSessions = [...data.sessions, { id: newId, date: sessionDate, entries: cleaned }];
     }
+    // La sessione appena salvata diventa "quella in modifica": non compare nelle note precedenti.
+    setEditingId(currentSessionIdRef.current);
     persist({ ...data, sessions: nextSessions });
     if (final) {
       setToday({});
       setSessionDate(todayISO());
       currentSessionIdRef.current = null;
+      setEditingId(null);
       setTab("history");
     }
+  }
+
+  /* --- Peso corporeo --- */
+  const bodyWeights = useMemo(
+    () => [...(data.bodyWeights || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
+    [data.bodyWeights]
+  );
+  const bodyAvg = useMemo(() => movingAvg7(bodyWeights), [bodyWeights]);
+  function onWDateChange(v) {
+    setWDate(v);
+    const ex = bodyWeights.find((p) => p.date === v);
+    setWKg(ex ? String(ex.kg).replace(".", lang === "it" ? "," : ".") : "");
+    setWMsg(null);
+  }
+  function saveWeight() {
+    const kg = parseFloat(String(wKg).replace(",", "."));
+    if (!Number.isFinite(kg) || kg < 20 || kg > 400 || !wDate) { setWMsg(t("wInvalid")); return; }
+    const next = (data.bodyWeights || []).filter((p) => p.date !== wDate).concat([{ date: wDate, kg: Math.round(kg * 10) / 10 }]);
+    persist({ ...data, bodyWeights: next });
+    setWKg("");
+    setWDate(todayISO());
+    setWMsg(null);
+  }
+  function deleteWeight(date) {
+    persist({ ...data, bodyWeights: (data.bodyWeights || []).filter((p) => p.date !== date) });
   }
 
   const groupedLibrary = CATEGORIES.map((cat) => ({ cat, items: data.exercises.filter((e) => e.category === cat) }));
@@ -773,13 +1029,13 @@ function GymAgent() {
                 <div style={{ marginTop: 12, background: "#1c1c19", border: "1px solid #26241f", borderRadius: 8, padding: 14 }}>
                   {groupedLibrary.map((g) => (
                     <div key={g.cat} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, textTransform: "uppercase", color: "#9a978c", marginBottom: 6 }}>{g.cat}</div>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", color: "#9a978c", marginBottom: 6 }}>{catName(g.cat)}</div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                         {buildPickerItems(g.items).map((item) => {
                           if (item.type === "single") {
                             const ex = item.ex;
                             return (
-                              <span key={ex.id} className="ga-chip" onClick={() => onPick(ex)} style={today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}}>{ex.name}</span>
+                              <span key={ex.id} className="ga-chip" onClick={() => onPick(ex)} style={usedToday.has(ex.id) ? { opacity: 0.35, pointerEvents: "none" } : {}}>{exName(ex)}</span>
                             );
                           }
                           const lastId = lastUsedVariantId(item.exercises);
@@ -793,11 +1049,11 @@ function GymAgent() {
                                     className="ga-chip"
                                     onClick={() => onPick(ex)}
                                     style={{
-                                      ...(today[ex.id] ? { opacity: 0.35, pointerEvents: "none" } : {}),
+                                      ...(usedToday.has(ex.id) ? { opacity: 0.35, pointerEvents: "none" } : {}),
                                       ...(ex.id === lastId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}),
                                     }}
                                   >
-                                    {ex.variantLabel}{ex.id === lastId ? " ✓" : ""}
+                                    {lbl(ex.variantLabel)}{ex.id === lastId ? " ✓" : ""}
                                   </span>
                                 ))}
                               </div>
@@ -810,25 +1066,25 @@ function GymAgent() {
 
                   <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #26241f" }}>
                     {!newExOpen ? (
-                      <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(true)}>➕ Nuovo esercizio personalizzato</button>
+                      <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(true)}>{t("newCustom")}</button>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <input className="ga-input" placeholder="Nome esercizio" value={newExName} onChange={(e) => setNewExName(e.target.value)} />
+                        <input className="ga-input" placeholder={t("exNamePh")} value={newExName} onChange={(e) => setNewExName(e.target.value)} />
                         <div style={{ display: "flex", gap: 8 }}>
                           <select className="ga-input" value={newExCategory} onChange={(e) => setNewExCategory(e.target.value)}>
-                            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                            {CATEGORIES.map((c) => <option key={c} value={c}>{catName(c)}</option>)}
                           </select>
                           <select className="ga-input" value={newExType} onChange={(e) => setNewExType(e.target.value)}>
-                            <option value="weight">A peso</option>
-                            <option value="other">Libero (reps/tempo)</option>
+                            <option value="weight">{t("typeWeight")}</option>
+                            <option value="other">{t("typeOther")}</option>
                           </select>
                         </div>
                         {newExType === "weight" && (
-                          <input className="ga-input" placeholder="Unità di misura (es. kg, lb, kg/lato)" value={newExUnit} onChange={(e) => setNewExUnit(e.target.value)} />
+                          <input className="ga-input" placeholder={t("unitPh")} value={newExUnit} onChange={(e) => setNewExUnit(e.target.value)} />
                         )}
                         <div style={{ display: "flex", gap: 8 }}>
-                          <button className="ga-btn ga-btn-accent" style={{ fontSize: 13 }} onClick={createCustomExercise}>{replacingId ? "Crea e sostituisci" : "Crea e aggiungi"}</button>
-                          <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(false)}>Annulla</button>
+                          <button className="ga-btn ga-btn-accent" style={{ fontSize: 13 }} onClick={createCustomExercise}>{replacingId ? t("createReplace") : t("createAdd")}</button>
+                          <button className="ga-btn" style={{ fontSize: 13 }} onClick={() => setNewExOpen(false)}>{t("cancel")}</button>
                         </div>
                       </div>
                     )}
@@ -837,27 +1093,93 @@ function GymAgent() {
     );
   }
 
+  // Riga "Ultima volta (gg/mm): ..." sotto il nome (solo per esercizi aggiunti/sostituiti a mano)
+  function renderLastTime(exId, label) {
+    const last = lastEntryOf(exId);
+    const text = last ? t("lastTime", { d: fmtShort(last.date), s: fmtSets(last.entry) }) : t("firstTime");
+    return (
+      <div className="ga-mono" style={{ fontSize: 11, color: "#9a978c", marginTop: 4 }}>
+        {label ? <span style={{ color: "#7FC4E8" }}>{label} · </span> : null}{text}
+      </div>
+    );
+  }
+
+  // Box "Note precedenti" in sola lettura
+  function renderPrevNotes(exId, key, title) {
+    const notes = previousNotes(exId);
+    if (notes.length === 0) return null;
+    const open = !!openNotes[key];
+    const shown = open ? notes.slice(0, 10) : notes.slice(0, 2);
+    const hidden = Math.min(notes.length, 10) - 2;
+    return (
+      <div style={{ marginTop: 10, borderLeft: "3px solid #D6E24B", background: "#22211c", borderRadius: "0 6px 6px 0", padding: "8px 10px", fontSize: 12 }}>
+        <div style={{ color: "#D6E24B", fontWeight: 600, marginBottom: 4, display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <span>{t("prevNotes")}</span>
+          {title && <span style={{ color: "#9a978c", fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>}
+        </div>
+        {shown.map((n, i) => (
+          <div key={i} style={{ color: "#c9c6ba", marginTop: 3 }}>
+            <span className="ga-mono" style={{ color: "#9a978c", marginRight: 6 }}>{fmtShort(n.date)}</span>{n.note}
+          </div>
+        ))}
+        {hidden > 0 && (
+          <span style={{ color: "#7FC4E8", cursor: "pointer", marginTop: 4, display: "inline-block" }}
+            onClick={() => setOpenNotes((o) => ({ ...o, [key]: !open }))}>
+            {open ? t("hide") : t("showMore", { n: hidden })}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  function renderToggle(on, label, color, onClick) {
+    return (
+      <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: on ? color : "#c9c6ba", cursor: "pointer", userSelect: "none" }}>
+        <div style={{ width: 34, height: 18, borderRadius: 9, background: on ? color : "#33312a", position: "relative", transition: "background .2s" }}>
+          <div style={{ position: "absolute", top: 2, left: on ? 18 : 2, width: 14, height: 14, borderRadius: "50%", background: on ? "#121210" : "#9a978c", transition: "left .2s" }}></div>
+        </div>
+        {label}
+      </div>
+    );
+  }
+
   const syncLabel = {
-    offline: "non collegato a Google",
-    syncing: "sincronizzazione...",
-    synced: "sincronizzato con Drive",
-    error: "errore di sincronizzazione",
+    offline: t("syncOffline"),
+    syncing: t("syncSyncing"),
+    synced: t("syncSynced"),
+    error: t("syncError"),
   }[syncStatus];
   const syncColor = { offline: "#9a978c", syncing: "#D6E24B", synced: "#7FBF7F", error: "#E2572B" }[syncStatus];
+
+  const DROP_COLOR = "#E8A27F", SS_COLOR = "#7FC4E8";
+
+  // Dati del grafico peso secondo il periodo scelto
+  const wCutoff = wRange === "1m" ? addDaysISO(todayISO(), -30) : wRange === "3m" ? addDaysISO(todayISO(), -90) : "0000-00-00";
+  const wPoints = bodyWeights.filter((p) => p.date >= wCutoff);
+  const wAvgPoints = bodyAvg.filter((p) => p.date >= wCutoff);
+  const wLast = bodyWeights[bodyWeights.length - 1];
+  function wDelta(days) {
+    if (!wLast) return null;
+    const ref = valueOnOrBefore(bodyWeights, addDaysISO(wLast.date, -days));
+    return ref ? wLast.kg - ref.kg : null;
+  }
+  const fmtDelta = (d) => (d == null ? "—" : `${d > 0 ? "+" : d < 0 ? "−" : "±"}${fmtNum(Math.abs(d), 1)}`);
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", background: "#121210", color: "#EDEAE0", minHeight: "100vh", padding: "0 0 40px 0" }}>
       <style>{`
         .ga-mono { font-family: 'JetBrains Mono', monospace, monospace; }
-        .ga-input { background:#1c1c19; border:1px solid #33312a; color:#EDEAE0; border-radius:6px; padding:6px 8px; font-family: monospace; font-size:14px; width:100%; box-sizing:border-box; }
+        .ga-input { background:#1c1c19; border:1px solid #33312a; color:#EDEAE0; border-radius:6px; padding:6px 8px; font-family: monospace; font-size:14px; width:100%; box-sizing:border-box; min-width:0; }
         .ga-input:focus { outline:none; border-color:#D6E24B; }
         .ga-btn { background:transparent; border:1px solid #33312a; color:#EDEAE0; border-radius:6px; padding:8px 14px; cursor:pointer; font-size:14px; display:inline-flex; align-items:center; gap:6px; }
         .ga-btn:hover { border-color:#D6E24B; background:#1c1c19; }
         .ga-btn-accent { background:#D6E24B; color:#1a1a12; border-color:#D6E24B; font-weight:600; }
         .ga-chip { border:1px solid #33312a; border-radius:999px; padding:5px 12px; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; background:#1c1c19; }
         .ga-chip:hover { border-color:#D6E24B; }
-        .ga-tab { background:transparent; border:none; color:#9a978c; padding:10px 12px; cursor:pointer; display:flex; align-items:center; gap:6px; font-size:13px; border-bottom:2px solid transparent; }
+        .ga-tab { background:transparent; border:none; color:#9a978c; padding:10px 12px; cursor:pointer; display:flex; align-items:center; gap:6px; font-size:13px; border-bottom:2px solid transparent; white-space:nowrap; }
         .ga-tab.active { color:#D6E24B; border-bottom:2px solid #D6E24B; }
+        .ga-dual .ga-input { padding:6px 5px; }
+        .ga-stat { flex:1; min-width:0; background:#1c1c19; border:1px solid #26241f; border-radius:8px; padding:10px; }
       `}</style>
 
       <div style={{ padding: "20px 20px 0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -870,43 +1192,57 @@ function GymAgent() {
       </div>
 
       <div style={{ display: "flex", gap: 4, padding: "14px 20px 0 20px", borderBottom: "1px solid #26241f", marginTop: 12, overflowX: "auto" }}>
-        <button className={`ga-tab ${tab === "log" ? "active" : ""}`} onClick={() => setTab("log")}>📋 Oggi</button>
-        <button className={`ga-tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>🕒 Storico</button>
-        <button className={`ga-tab ${tab === "library" ? "active" : ""}`} onClick={() => setTab("library")}>📚 Esercizi</button>
-        <button className={`ga-tab ${tab === "settings" ? "active" : ""}`} onClick={() => setTab("settings")}>⚙️ Impostazioni</button>
+        <button className={`ga-tab ${tab === "log" ? "active" : ""}`} onClick={() => setTab("log")}>{t("tabToday")}</button>
+        <button className={`ga-tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>{t("tabHistory")}</button>
+        <button className={`ga-tab ${tab === "weight" ? "active" : ""}`} onClick={() => setTab("weight")}>{t("tabWeight")}</button>
+        <button className={`ga-tab ${tab === "library" ? "active" : ""}`} onClick={() => setTab("library")}>{t("tabLibrary")}</button>
+        <button className={`ga-tab ${tab === "settings" ? "active" : ""}`} onClick={() => setTab("settings")}>{t("tabSettings")}</button>
       </div>
 
       <div style={{ padding: 20, maxWidth: 720, margin: "0 auto" }}>
         {tab === "log" && (
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-              <span style={{ fontSize: 13, color: "#9a978c" }}>Data allenamento</span>
+              <span style={{ fontSize: 13, color: "#9a978c" }}>{t("workoutDate")}</span>
               <input type="date" className="ga-input" style={{ width: 160 }} value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} />
             </div>
 
             <div style={{ marginBottom: 16 }}>
-              <button className="ga-btn" onClick={() => setPickerOpen((v) => !v)}>➕ Aggiungi esercizio {pickerOpen ? "▲" : "▼"}</button>
+              <button className="ga-btn" onClick={() => setPickerOpen((v) => !v)}>{t("addExercise")} {pickerOpen ? "▲" : "▼"}</button>
               {pickerOpen && renderExercisePicker(addExerciseToToday)}
             </div>
 
             {Object.keys(today).length === 0 && (
-              <div style={{ color: "#9a978c", fontSize: 14, padding: "20px 0" }}>Nessun esercizio selezionato.</div>
+              <div style={{ color: "#9a978c", fontSize: 14, padding: "20px 0" }}>{t("noExercises")}</div>
             )}
 
             {Object.keys(today).map((exId) => {
               const ex = exercisesById[exId];
               const entry = today[exId];
+              if (!ex) return null;
+              const mode = entry.mode || null;
+              const dual = mode === "drop" || mode === "superset";
+              const pairEx = mode === "superset" && entry.pairId ? exercisesById[entry.pairId] : null;
+              const col2 = mode === "drop" ? DROP_COLOR : SS_COLOR;
+              const cols = dual ? "18px 1fr 1fr 4px 1fr 1fr 30px" : "24px 1fr 1fr 30px";
+              const unit = lbl(ex.unit);
+              const pairOptions = data.exercises.filter((e) => e.type === "weight" && e.id !== exId && (e.id === entry.pairId || !usedToday.has(e.id)));
               return (
                 <div key={exId} style={{ background: "#1c1c19", border: "1px solid #26241f", borderRadius: 10, padding: 14, marginBottom: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 15 }}>{ex.name}</div>
-                      <div style={{ fontSize: 12, color: "#D6E24B", marginTop: 4 }}>{entry.suggestion?.text}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>
+                        {exName(ex)}
+                        {mode === "superset" && pairEx && <span style={{ color: SS_COLOR }}> + {exName(pairEx)}</span>}
+                        {mode === "drop" && <span style={{ color: DROP_COLOR, fontSize: 11, fontWeight: 600, marginLeft: 6 }}>· DROP SET</span>}
+                      </div>
+                      {entry.showLast && renderLastTime(exId)}
+                      {mode === "superset" && pairEx && entry.showLast && renderLastTime(pairEx.id, exName(pairEx))}
                     </div>
                     <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                       <button
                         className="ga-btn"
-                        title="Sostituisci esercizio"
+                        title={t("replaceTitle")}
                         style={{ padding: "6px 8px", ...(replacingId === exId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}) }}
                         onClick={() => { setReplacingId((v) => (v === exId ? null : exId)); setNewExOpen(false); setPickerOpen(false); }}
                       >🔄</button>
@@ -916,43 +1252,71 @@ function GymAgent() {
 
                   {replacingId === exId && (
                     <div style={{ marginTop: 10 }}>
-                      <div style={{ fontSize: 12, color: "#9a978c" }}>
-                        Scegli il nuovo esercizio: resta in questa posizione e i valori già inseriti vengono mantenuti.
-                      </div>
+                      <div style={{ fontSize: 12, color: "#9a978c" }}>{t("replaceHint")}</div>
                       {renderExercisePicker((newEx) => replaceExerciseInToday(exId, newEx))}
-                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginTop: 8 }} onClick={() => { setReplacingId(null); setNewExOpen(false); }}>Annulla sostituzione</button>
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginTop: 8 }} onClick={() => { setReplacingId(null); setNewExOpen(false); }}>{t("cancelReplace")}</button>
                     </div>
                   )}
                   {ex.type === "weight" ? (
                     <div style={{ marginTop: 10 }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "24px 1fr 1fr 24px", gap: 8, fontSize: 11, color: "#9a978c", marginBottom: 4 }}>
-                        <span></span><span>Peso ({ex.unit})</span><span>Reps</span><span></span>
+                      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 8 }}>
+                        {renderToggle(mode === "drop", t("dropset"), DROP_COLOR, () => toggleMode(exId, "drop"))}
+                        {renderToggle(mode === "superset", t("superset"), SS_COLOR, () => toggleMode(exId, "superset"))}
                       </div>
-                      {entry.sets.map((s, i) => (
-                        <div key={i} style={{ display: "grid", gridTemplateColumns: "24px 1fr 1fr 24px", gap: 8, marginBottom: 6, alignItems: "center" }}>
-                          <span className="ga-mono" style={{ color: "#9a978c", fontSize: 13 }}>{i + 1}</span>
-                          <input className="ga-input" type="number" step="0.5" value={s.weight} onChange={(e) => updateSet(exId, i, "weight", e.target.value)} />
-                          <input className="ga-input" type="number" value={s.reps} onChange={(e) => updateSet(exId, i, "reps", e.target.value)} />
-                          <button className="ga-btn" style={{ padding: "4px 6px" }} onClick={() => removeSetRow(exId, i)}>🗑</button>
+                      {mode === "superset" && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12 }}>
+                          <span style={{ color: SS_COLOR, whiteSpace: "nowrap" }}>{t("pairWith")}</span>
+                          <select className="ga-input" value={entry.pairId || ""} onChange={(e) => setPair(exId, e.target.value)}>
+                            <option value="">{t("choose")}</option>
+                            {CATEGORIES.map((c) => {
+                              const opts = pairOptions.filter((e) => e.category === c);
+                              if (!opts.length) return null;
+                              return <optgroup key={c} label={catName(c)}>{opts.map((e) => <option key={e.id} value={e.id}>{exName(e)}</option>)}</optgroup>;
+                            })}
+                          </select>
                         </div>
-                      ))}
-                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => addSetRow(exId)}>+ serie</button>
-                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginLeft: 6 }} onClick={() => applyFirstToAll(exId)}>📋 Applica 1ª serie a tutte</button>
-                      <input className="ga-input" style={{ marginTop: 10 }} placeholder="Nota (facoltativa, es. sensazioni, tecnica...)" value={entry.note || ""} onChange={(e) => updateNote(exId, e.target.value)} />
+                      )}
+                      <div className={dual ? "ga-dual" : ""}>
+                        <div style={{ display: "grid", gridTemplateColumns: cols, gap: dual ? 5 : 8, fontSize: 11, color: "#9a978c", marginBottom: 4 }}>
+                          <span></span>
+                          <span style={dual ? { color: "#D6E24B" } : {}}>{dual ? t("weightShort") : t("weightCol", { u: unit })}</span>
+                          <span style={dual ? { color: "#D6E24B" } : {}}>{t("repsCol")}</span>
+                          {dual && <span></span>}
+                          {dual && <span style={{ color: col2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{mode === "drop" ? t("dropWeightCol") : (pairEx ? exName(pairEx) : t("weightShort"))}</span>}
+                          {dual && <span style={{ color: col2 }}>{t("repsCol")}</span>}
+                          <span></span>
+                        </div>
+                        {entry.sets.map((s, i) => (
+                          <div key={i} style={{ display: "grid", gridTemplateColumns: cols, gap: dual ? 5 : 8, marginBottom: 6, alignItems: "center" }}>
+                            <span className="ga-mono" style={{ color: "#9a978c", fontSize: 13 }}>{i + 1}</span>
+                            <input className="ga-input" type="number" inputMode="decimal" step="0.5" value={s.weight} onChange={(e) => updateSet(exId, i, "weight", e.target.value)} />
+                            <input className="ga-input" type="number" inputMode="numeric" value={s.reps} onChange={(e) => updateSet(exId, i, "reps", e.target.value)} />
+                            {dual && <span style={{ width: 2, height: 26, background: "#33312a", borderRadius: 2, justifySelf: "center" }}></span>}
+                            {dual && <input className="ga-input" style={{ borderColor: mode === "drop" ? "#5a3c2c" : "#2c4a5a" }} type="number" inputMode="decimal" step="0.5" value={s.weight2 || ""} onChange={(e) => updateSet(exId, i, "weight2", e.target.value)} />}
+                            {dual && <input className="ga-input" style={{ borderColor: mode === "drop" ? "#5a3c2c" : "#2c4a5a" }} type="number" inputMode="numeric" value={s.reps2 || ""} onChange={(e) => updateSet(exId, i, "reps2", e.target.value)} />}
+                            <button className="ga-btn" style={{ padding: "4px 6px" }} onClick={() => removeSetRow(exId, i)}>🗑</button>
+                          </div>
+                        ))}
+                      </div>
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => addSetRow(exId)}>{t("addSet")}</button>
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginLeft: 6 }} onClick={() => applyFirstToAll(exId)}>{t("applyFirst")}</button>
+                      <input className="ga-input" style={{ marginTop: 10 }} placeholder={t("notePh")} value={entry.note || ""} onChange={(e) => updateNote(exId, e.target.value)} />
                     </div>
                   ) : (
                     <div style={{ marginTop: 10 }}>
-                      <input className="ga-input" placeholder="es. 3x15, oppure 2 min" value={entry.note} onChange={(e) => updateNote(exId, e.target.value)} />
+                      <input className="ga-input" placeholder={t("otherPh")} value={entry.note || ""} onChange={(e) => updateNote(exId, e.target.value)} />
                     </div>
                   )}
+                  {renderPrevNotes(exId, exId, mode === "superset" && pairEx ? exName(ex) : null)}
+                  {mode === "superset" && pairEx && renderPrevNotes(pairEx.id, exId + "|" + pairEx.id, exName(pairEx))}
                 </div>
               );
             })}
 
             {Object.keys(today).length > 0 && (
               <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                <button className="ga-btn" onClick={() => saveSession(false)}>💾 Salva parziale (continua)</button>
-                <button className="ga-btn ga-btn-accent" onClick={() => saveSession(true)}>✅ Salva allenamento</button>
+                <button className="ga-btn" onClick={() => saveSession(false)}>{t("savePartial")}</button>
+                <button className="ga-btn ga-btn-accent" onClick={() => saveSession(true)}>{t("saveFinal")}</button>
               </div>
             )}
           </div>
@@ -961,49 +1325,53 @@ function GymAgent() {
         {tab === "history" && (
           <div>
             <div style={{ marginBottom: 16 }}>
-              <span style={{ fontSize: 13, color: "#9a978c", marginRight: 8 }}>Vedi andamento esercizio:</span>
+              <span style={{ fontSize: 13, color: "#9a978c", marginRight: 8 }}>{t("seeTrend")}</span>
               <select className="ga-input" style={{ width: 260, display: "inline-block" }} value={historyFilter} onChange={(e) => setHistoryFilter(e.target.value)}>
-                <option value="">-- tutte le sessioni --</option>
-                {data.exercises.filter((e) => e.type === "weight").map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                <option value="">{t("allSessions")}</option>
+                {data.exercises.filter((e) => e.type === "weight").map((e) => <option key={e.id} value={e.id}>{exName(e)}</option>)}
               </select>
             </div>
             {historyFilter ? (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead><tr style={{ color: "#9a978c", textAlign: "left", borderBottom: "1px solid #26241f" }}>
-                  <th style={{ padding: "6px 4px" }}>Data</th><th style={{ padding: "6px 4px" }}>Serie</th><th></th>
+                  <th style={{ padding: "6px 4px" }}>{t("thDate")}</th><th style={{ padding: "6px 4px" }}>{t("thSets")}</th><th></th>
                 </tr></thead>
                 <tbody>
                   {exerciseHistoryRows.map((r, i) => (
                     <tr key={i} style={{ borderBottom: "1px solid #1c1c19" }}>
-                      <td style={{ padding: "6px 4px" }} className="ga-mono">{fmtDate(r.date)}</td>
+                      <td style={{ padding: "6px 4px", verticalAlign: "top" }} className="ga-mono">{fmtDate(r.date)}</td>
                       <td style={{ padding: "6px 4px" }} className="ga-mono">
-                        {r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ")}
+                        {fmtSets(r.entry)}
+                        {(r.entry.superset || r.entry.supersetOf) && (
+                          <span style={{ color: SS_COLOR, fontFamily: "system-ui, sans-serif", fontSize: 11 }}> ⇄ {exName(exercisesById[r.entry.superset || r.entry.supersetOf])}</span>
+                        )}
                         {r.entry.note && <div style={{ color: "#D6E24B", fontStyle: "italic", fontFamily: "system-ui, sans-serif" }}>📝 {r.entry.note}</div>}
                       </td>
                       <td></td>
                     </tr>
                   ))}
-                  {exerciseHistoryRows.length === 0 && <tr><td colSpan={3} style={{ padding: 12, color: "#9a978c" }}>Nessuno storico per questo esercizio.</td></tr>}
+                  {exerciseHistoryRows.length === 0 && <tr><td colSpan={3} style={{ padding: 12, color: "#9a978c" }}>{t("noHistoryEx")}</td></tr>}
                 </tbody>
               </table>
             ) : (
               <div>
-                {sortedSessions.length === 0 && <div style={{ color: "#9a978c" }}>Ancora nessun allenamento registrato.</div>}
+                {sortedSessions.length === 0 && <div style={{ color: "#9a978c" }}>{t("noWorkouts")}</div>}
                 {sortedSessions.map((s) => (
                   <div key={s.id} style={{ marginBottom: 8, border: "1px solid #26241f", borderRadius: 8, overflow: "hidden" }}>
                     <div onClick={() => setExpandedSession(expandedSession === s.id ? null : s.id)} style={{ padding: "10px 14px", background: "#1c1c19", cursor: "pointer", display: "flex", justifyContent: "space-between" }}>
                       <span className="ga-mono">{fmtDate(s.date)}</span>
-                      <span style={{ fontSize: 12, color: "#9a978c" }}>{s.entries.length} esercizi {expandedSession === s.id ? "▲" : "▼"}</span>
+                      <span style={{ fontSize: 12, color: "#9a978c" }}>{t("nExercises", { n: s.entries.length })} {expandedSession === s.id ? "▲" : "▼"}</span>
                     </div>
                     {expandedSession === s.id && (
                       <div style={{ padding: "10px 14px" }}>
                         {s.entries.map((e, i) => {
                           const ex = exercisesById[e.exerciseId];
+                          const linked = e.superset || e.supersetOf;
                           return (
-                            <div key={i} style={{ marginBottom: 6 }}>
-                              <div style={{ fontSize: 13, display: "flex", justifyContent: "space-between" }}>
-                                <span>{ex ? ex.name : e.exerciseId}</span>
-                                <span className="ga-mono" style={{ color: "#9a978c" }}>{ex && ex.type === "weight" ? e.sets.map((s2) => `${s2.weight}x${s2.reps}`).join(" / ") : e.note}</span>
+                            <div key={i} style={{ marginBottom: 6, ...(linked ? { borderLeft: `2px solid ${SS_COLOR}`, paddingLeft: 8 } : {}) }}>
+                              <div style={{ fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                <span>{ex ? exName(ex) : e.exerciseId}{e.drop && <span style={{ color: DROP_COLOR, fontSize: 10, marginLeft: 6 }}>DROP</span>}{e.superset && <span style={{ color: SS_COLOR, fontSize: 10, marginLeft: 6 }}>SUPERSET</span>}</span>
+                                <span className="ga-mono" style={{ color: "#9a978c", textAlign: "right" }}>{fmtSets(e)}</span>
                               </div>
                               {ex && ex.type === "weight" && e.note && (
                                 <div style={{ fontSize: 12, color: "#D6E24B", marginTop: 2, fontStyle: "italic" }}>📝 {e.note}</div>
@@ -1011,13 +1379,80 @@ function GymAgent() {
                             </div>
                           );
                         })}
-                        <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid #26241f" }}>
-                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => editSession(s)}>Modifica</button>
-                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => duplicateSession(s)}>📋 Duplica (oggi)</button>
-                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", borderColor: "#E2572B", color: "#E2572B" }} onClick={() => deleteSession(s.id)}>🗑 Elimina</button>
+                        <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid #26241f", flexWrap: "wrap" }}>
+                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => editSession(s)}>{t("edit")}</button>
+                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => duplicateSession(s)}>{t("duplicate")}</button>
+                          <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", borderColor: "#E2572B", color: "#E2572B" }} onClick={() => deleteSession(s.id)}>{t("del")}</button>
                         </div>
                       </div>
                     )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "weight" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 6 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#9a978c" }}>
+                {t("wDate")}
+                <input type="date" className="ga-input" style={{ width: 160 }} value={wDate} max={todayISO()} onChange={(e) => onWDateChange(e.target.value)} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#9a978c" }}>
+                {t("wKg")}
+                <input type="text" inputMode="decimal" className="ga-input" style={{ width: 110 }} placeholder={lang === "it" ? "75,0" : "75.0"} value={wKg}
+                  onChange={(e) => { setWKg(e.target.value); setWMsg(null); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveWeight(); }} />
+              </label>
+              <button className="ga-btn ga-btn-accent" onClick={saveWeight}>
+                {bodyWeights.some((p) => p.date === wDate) ? t("wUpdate") : t("wSave")}
+              </button>
+            </div>
+            {wMsg && <div style={{ fontSize: 12, color: "#E2572B", marginBottom: 6 }}>{wMsg}</div>}
+
+            {bodyWeights.length === 0 ? (
+              <div style={{ color: "#9a978c", fontSize: 14, padding: "24px 0" }}>{t("wEmpty")}</div>
+            ) : (
+              <div>
+                <div style={{ display: "flex", gap: 8, margin: "16px 0" }}>
+                  <div className="ga-stat">
+                    <div style={{ fontSize: 11, color: "#9a978c" }}>{t("wCurrent")}</div>
+                    <div className="ga-mono" style={{ fontSize: 20, fontWeight: 600 }}>{fmtNum(wLast.kg, 1)}</div>
+                    <div style={{ fontSize: 10, color: "#9a978c" }}>{fmtShort(wLast.date)}</div>
+                  </div>
+                  <div className="ga-stat">
+                    <div style={{ fontSize: 11, color: "#9a978c" }}>{t("wAvg")}</div>
+                    <div className="ga-mono" style={{ fontSize: 20, fontWeight: 600, color: "#D6E24B" }}>{fmtNum(bodyAvg[bodyAvg.length - 1].kg, 1)}</div>
+                  </div>
+                  <div className="ga-stat">
+                    <div style={{ fontSize: 11, color: "#9a978c" }}>{t("w7")}</div>
+                    <div className="ga-mono" style={{ fontSize: 16, fontWeight: 600 }}>{fmtDelta(wDelta(7))}</div>
+                    <div style={{ fontSize: 11, color: "#9a978c", marginTop: 4 }}>{t("w30")}</div>
+                    <div className="ga-mono" style={{ fontSize: 14 }}>{fmtDelta(wDelta(30))}</div>
+                  </div>
+                </div>
+
+                <div style={{ background: "#1c1c19", border: "1px solid #26241f", borderRadius: 10, padding: 12 }}>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                    {[["1m", t("r1m")], ["3m", t("r3m")], ["all", t("rAll")]].map(([k, l]) => (
+                      <button key={k} className={`ga-btn ${wRange === k ? "ga-btn-accent" : ""}`} style={{ fontSize: 12, padding: "4px 10px" }} onClick={() => setWRange(k)}>{l}</button>
+                    ))}
+                  </div>
+                  {wPoints.length === 0
+                    ? <div style={{ fontSize: 12, color: "#9a978c", padding: "24px 0", textAlign: "center" }}>{t("wNoData")}</div>
+                    : <WeightChart points={wPoints} avg={wAvgPoints} t={t} />}
+                </div>
+
+                <div style={{ fontSize: 13, color: "#9a978c", margin: "18px 0 6px" }}>{t("wList")}</div>
+                {[...bodyWeights].reverse().slice(0, 60).map((p) => (
+                  <div key={p.date} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #1c1c19", fontSize: 13 }}>
+                    <span className="ga-mono" style={{ cursor: "pointer" }} onClick={() => onWDateChange(p.date)}>{fmtDate(p.date)}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span className="ga-mono" style={{ cursor: "pointer" }} onClick={() => onWDateChange(p.date)}>{fmtNum(p.kg, 1)} kg</span>
+                      <button className="ga-btn" style={{ padding: "3px 6px", fontSize: 12 }} onClick={() => deleteWeight(p.date)}>🗑</button>
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1029,27 +1464,27 @@ function GymAgent() {
           <div>
             {groupedLibrary.map((g) => (
               <div key={g.cat} style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 12, textTransform: "uppercase", color: "#9a978c", marginBottom: 8 }}>{g.cat}</div>
+                <div style={{ fontSize: 12, textTransform: "uppercase", color: "#9a978c", marginBottom: 8 }}>{catName(g.cat)}</div>
                 {g.items.map((ex) => {
                   const isOpen = expandedExercise === ex.id;
                   const rows = isOpen ? getExerciseHistoryRows(ex.id) : [];
                   return (
                     <div key={ex.id} style={{ borderBottom: "1px solid #1c1c19" }}>
-                      <div onClick={() => setExpandedExercise(isOpen ? null : ex.id)} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
-                        <span>{ex.name}</span>
-                        <span className="ga-mono" style={{ color: "#9a978c" }}>
-                          {ex.type === "weight" ? `+${ex.increment}${ex.unit} · massa ${ex.rangeMassa[0]}-${ex.rangeMassa[1]} · forza ${ex.rangeForza[0]}-${ex.rangeForza[1]}` : "libero"} {isOpen ? "▲" : "▼"}
+                      <div onClick={() => setExpandedExercise(isOpen ? null : ex.id)} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", fontSize: 13, cursor: "pointer", gap: 8 }}>
+                        <span>{exName(ex)}</span>
+                        <span className="ga-mono" style={{ color: "#9a978c", whiteSpace: "nowrap" }}>
+                          {ex.type === "weight" ? lbl(ex.unit) : t("free")} {isOpen ? "▲" : "▼"}
                         </span>
                       </div>
                       {isOpen && (
                         <div style={{ padding: "4px 0 12px 0" }}>
-                          {rows.length === 0 ? <div style={{ fontSize: 12, color: "#9a978c" }}>Nessuno storico.</div> : (
+                          {rows.length === 0 ? <div style={{ fontSize: 12, color: "#9a978c" }}>{t("noHistory")}</div> : (
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                               <tbody>
                                 {rows.map((r, i) => (
                                   <tr key={i} style={{ borderTop: "1px solid #26241f" }}>
                                     <td style={{ padding: "4px 4px" }} className="ga-mono">{fmtDate(r.date)}</td>
-                                    <td style={{ padding: "4px 4px" }} className="ga-mono">{ex.type === "weight" ? r.entry.sets.map((s) => `${s.weight}x${s.reps}`).join(" / ") : r.entry.note}</td>
+                                    <td style={{ padding: "4px 4px" }} className="ga-mono">{fmtSets(r.entry)}</td>
                                     <td></td>
                                   </tr>
                                 ))}
@@ -1069,28 +1504,35 @@ function GymAgent() {
         {tab === "settings" && (
           <div>
             <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Sincronizzazione Google Drive</div>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>{t("driveTitle")}</div>
               {!signedIn ? (
-                <button className="ga-btn ga-btn-accent" onClick={requestSignIn}>🔐 Accedi con Google</button>
+                <button className="ga-btn ga-btn-accent" onClick={requestSignIn}>{t("signIn")}</button>
               ) : (
                 <div style={{ fontSize: 13, color: syncColor }}>● {syncLabel}</div>
               )}
-              <div style={{ fontSize: 12, color: "#9a978c", marginTop: 6 }}>
-                I dati vengono salvati in una cartella riservata all'app nel tuo Google Drive, non visibile tra i tuoi file normali. Accedendo con lo stesso account da un altro dispositivo, i dati si sincronizzano automaticamente.
-              </div>
+              <div style={{ fontSize: 12, color: "#9a978c", marginTop: 6 }}>{t("driveInfo")}</div>
               {syncNotice && (
                 <div style={{ marginTop: 10, fontSize: 12, color: "#121210", background: "#D6E24B", borderRadius: 6, padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <span>⚠️ {syncNotice}</span>
+                  <span>⚠️ {t("syncNoticeOverwritten")}</span>
                   <button className="ga-btn" style={{ fontSize: 11, padding: "3px 8px", borderColor: "#121210", color: "#121210" }} onClick={() => setSyncNotice(null)}>OK</button>
                 </div>
               )}
             </div>
 
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>{t("languageTitle")}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className={`ga-btn ${lang === "it" ? "ga-btn-accent" : ""}`} onClick={() => changeLang("it")}>🇮🇹 Italiano</button>
+                <button className={`ga-btn ${lang === "en" ? "ga-btn-accent" : ""}`} onClick={() => changeLang("en")}>🇬🇧 English</button>
+              </div>
+              <div style={{ fontSize: 12, color: "#9a978c", marginTop: 6 }}>{t("languageInfo")}</div>
+            </div>
+
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Backup manuale (paracadute extra)</div>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>{t("backupTitle")}</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button className="ga-btn" onClick={downloadBackup}>⬇️ Esporta backup (file)</button>
-                <button className="ga-btn" onClick={() => { setShowImport(true); setExportText(null); setImportMsg(null); }}>Importa dati</button>
+                <button className="ga-btn" onClick={downloadBackup}>{t("exportBackup")}</button>
+                <button className="ga-btn" onClick={() => { setShowImport(true); setExportText(null); setImportMsg(null); }}>{t("importData")}</button>
               </div>
               {exportText && (
                 <div style={{ marginTop: 10 }}>
@@ -1107,31 +1549,23 @@ function GymAgent() {
                       r.onload = () => setImportText(String(r.result || ""));
                       r.readAsText(f);
                     }} />
-                  <textarea className="ga-input" placeholder="...oppure incolla qui il testo esportato" value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} style={{ fontSize: 11 }} />
-                  <div style={{ marginTop: 6, fontSize: 12, color: "#E2572B" }}>Attenzione: sostituisce tutti i dati.</div>
-                  <button className="ga-btn ga-btn-accent" style={{ marginTop: 8 }} onClick={importFromText}>Conferma importazione</button>
+                  <textarea className="ga-input" placeholder={t("importPh")} value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} style={{ fontSize: 11 }} />
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#E2572B" }}>{t("importWarn")}</div>
+                  <button className="ga-btn ga-btn-accent" style={{ marginTop: 8 }} onClick={importFromText}>{t("importConfirm")}</button>
                 </div>
               )}
               {importMsg && <div style={{ marginTop: 8, fontSize: 12 }}>{importMsg}</div>}
             </div>
 
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Fase di programmazione</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className={`ga-btn ${data.phase === "massa" ? "ga-btn-accent" : ""}`} onClick={() => persist({ ...data, phase: "massa" })}>🔥 Massa (8-12 reps)</button>
-                <button className={`ga-btn ${data.phase === "forza" ? "ga-btn-accent" : ""}`} onClick={() => persist({ ...data, phase: "forza" })}>🔥 Forza (4-6 reps)</button>
-              </div>
-            </div>
-
             <div>
-              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>Dati</div>
+              <div style={{ fontSize: 13, color: "#9a978c", marginBottom: 8 }}>{t("dataTitle")}</div>
               {!confirmReset ? (
-                <button className="ga-btn" onClick={() => setConfirmReset(true)}>🗑 Cancella tutti i dati</button>
+                <button className="ga-btn" onClick={() => setConfirmReset(true)}>{t("resetAll")}</button>
               ) : (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 13, color: "#E2572B" }}>Sicuro? Verranno rimossi anche gli esercizi personalizzati. Non si può annullare.</span>
-                  <button className="ga-btn" style={{ borderColor: "#E2572B", color: "#E2572B" }} onClick={() => { persist({ schemaVersion: SCHEMA_VERSION, phase: "massa", exercises: DEFAULT_EXERCISES, sessions: [] }); setConfirmReset(false); }}>Conferma</button>
-                  <button className="ga-btn" onClick={() => setConfirmReset(false)}>Annulla</button>
+                  <span style={{ fontSize: 13, color: "#E2572B" }}>{t("resetMsg")}</span>
+                  <button className="ga-btn" style={{ borderColor: "#E2572B", color: "#E2572B" }} onClick={() => { persist({ schemaVersion: SCHEMA_VERSION, phase: data.phase || "massa", exercises: DEFAULT_EXERCISES, sessions: [], bodyWeights: [] }); setConfirmReset(false); }}>{t("confirm")}</button>
+                  <button className="ga-btn" onClick={() => setConfirmReset(false)}>{t("cancel")}</button>
                 </div>
               )}
             </div>

@@ -304,6 +304,8 @@ const I18N = {
     trAllGroups: "‹ Tutti i gruppi", trBack: "‹ Indietro", trGroupVol: "Volume settimanale (kg × rip)", trExList: "Esercizi · massimale stimato",
     trE1rm: "Massimale stimato", trTop: "Serie migliore", trVol: "Volume", trRecord: "Record", trChange: "Nel periodo", trSessions: "Sessioni",
     trLast: "Ultime sessioni", trPrInfo: "★ = nuovo record di massimale stimato", trNoData: "Nessun dato in questo periodo",
+    trExclude: "Escludi dal trend", trInclude: "Reincludi nel trend", trShowAll: "Mostra tutte ({n})", trShowLess: "Mostra meno",
+    trExcludeInfo: "Tocca ✓ per escludere una sessione dal trend (es. peso segnato male), ✕ per reincluderla. Resta comunque nello storico.",
     superset: "Superset", dropset: "Drop set", rest: "Recupero", renameTitle: "Rinomina esercizio", renameSave: "Salva nome", pairWith: "+ in coppia con", choose: "— scegli esercizio —",
     lastTime: "Ultima volta ({d}): {s}", firstTime: "Prima volta per questo esercizio",
     prevNotes: "📝 Note precedenti", showMore: "mostra altre ({n})", hide: "nascondi",
@@ -342,6 +344,8 @@ const I18N = {
     trAllGroups: "‹ All groups", trBack: "‹ Back", trGroupVol: "Weekly volume (kg × reps)", trExList: "Exercises · estimated 1RM",
     trE1rm: "Estimated 1RM", trTop: "Top set", trVol: "Volume", trRecord: "Record", trChange: "In period", trSessions: "Sessions",
     trLast: "Recent sessions", trPrInfo: "★ = new estimated 1RM record", trNoData: "No data in this period",
+    trExclude: "Exclude from trends", trInclude: "Include in trends", trShowAll: "Show all ({n})", trShowLess: "Show less",
+    trExcludeInfo: "Tap ✓ to exclude a session from the trends (e.g. a mistyped weight), ✕ to bring it back. It stays in your history.",
     superset: "Superset", dropset: "Drop set", rest: "Rest", renameTitle: "Rename exercise", renameSave: "Save name", pairWith: "+ paired with", choose: "— choose exercise —",
     lastTime: "Last time ({d}): {s}", firstTime: "First time doing this exercise",
     prevNotes: "📝 Previous notes", showMore: "show more ({n})", hide: "hide",
@@ -642,11 +646,12 @@ function Spark({ values }) {
   return <svg width={w} height={h} style={{ display: "block" }}><path d={d} fill="none" stroke="#D6E24B" strokeWidth="1.5" /></svg>;
 }
 
-function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
+function TrendPage({ sessions, exercisesById, exName, catName, lbl, t, onToggleExclude }) {
   const [range, setRange] = useState(12); // settimane
   const [group, setGroup] = useState(null);
   const [exId, setExId] = useState(null);
   const [metric, setMetric] = useState("e1rm");
+  const [showAll, setShowAll] = useState(false);
   const today = todayISO();
   const from = addDaysISO(today, -range * 7 + 1);
 
@@ -657,7 +662,7 @@ function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
     asc.forEach((s) => (s.entries || []).forEach((e) => {
       const ex = exercisesById[e.exerciseId];
       if (!ex || ex.type !== "weight" || !Array.isArray(e.sets) || !e.sets.length) return;
-      (out[e.exerciseId] = out[e.exerciseId] || []).push({ date: s.date, entry: e, ...entryStats(e) });
+      (out[e.exerciseId] = out[e.exerciseId] || []).push({ date: s.date, sessionId: s.id, excluded: !!e.excluded, entry: e, ...entryStats(e) });
     }));
     return out;
   }, [sessions, exercisesById]);
@@ -671,6 +676,7 @@ function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
       if (exercisesById[id].category !== cat) return;
       let used = false;
       byEx[id].forEach((p) => {
+        if (p.excluded) return; // sessione esclusa dal trend
         const age = daysBetween(p.date, today);
         if (age < 0) return;
         if (age < range * 7) { sets += p.nSets; weekly[range - 1 - Math.floor(age / 7)] += p.vol; used = true; }
@@ -679,7 +685,7 @@ function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
       });
       if (used) exIds.push(id);
     });
-    exIds.sort((a, b) => byEx[b].filter((p) => p.date >= from).length - byEx[a].filter((p) => p.date >= from).length);
+    exIds.sort((a, b) => byEx[b].filter((p) => p.date >= from && !p.excluded).length - byEx[a].filter((p) => p.date >= from && !p.excluded).length);
     const delta = volPrev > 0 ? Math.round(((volRecent - volPrev) / volPrev) * 100) : null;
     return { cat, setsWeek: sets / range, delta, weekly, exIds };
   }), [byEx, range, today, from, exercisesById]);
@@ -704,7 +710,8 @@ function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
   if (exId && exercisesById[exId]) {
     const ex = exercisesById[exId];
     const unit = lbl(ex.unit || "kg");
-    const all = byEx[exId] || [];
+    const everything = byEx[exId] || [];
+    const all = everything.filter((p) => !p.excluded); // i calcoli ignorano le sessioni escluse
     const inRange = all.filter((p) => p.date >= from);
     const fmt = metric === "vol" ? fmtVol : fmtKgV;
     const unitTxt = metric === "vol" ? "" : " " + unit;
@@ -712,7 +719,12 @@ function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
     const record = all.length ? Math.max(...all.map((p) => p[metric])) : 0;
     const first = inRange[0], lastP = inRange[inRange.length - 1];
     const change = first && lastP && first[metric] > 0 && inRange.length > 1 ? Math.round(((lastP[metric] - first[metric]) / first[metric]) * 100) : null;
-    const recent = all.map((p, i) => ({ ...p, pr: i > 0 && p.e1rm > Math.max(...all.slice(0, i).map((q) => q.e1rm)) })).slice(-5).reverse();
+    // Elenco sessioni: tutte quelle del periodo (anche escluse), le più recenti in alto.
+    const listAll = everything.map((p) => {
+      const prev = all.filter((q) => q.date < p.date || (q.date === p.date && q.sessionId !== p.sessionId && everything.indexOf(q) < everything.indexOf(p)));
+      return { ...p, pr: !p.excluded && prev.length > 0 && p.e1rm > Math.max(...prev.map((q) => q.e1rm)) };
+    }).filter((p) => p.date >= from).reverse();
+    const recent = showAll ? listAll : listAll.slice(0, 5);
     return (
       <div>
         {rangeBar}
@@ -733,13 +745,27 @@ function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
         </div>
         <div style={card}>
           <div style={{ ...sub, marginBottom: 4 }}>{t("trLast")}</div>
-          {recent.map((p, i) => (
-            <div key={i} style={{ ...row, cursor: "default", fontSize: 13 }}>
-              <span className="ga-mono" style={{ color: "#9a978c" }}>{fmtShort(p.date)}</span>
-              <span className="ga-mono" style={{ textAlign: "right" }}>{fmtSets(p.entry)}{p.pr && <span style={{ color: "#D6E24B" }}> ★</span>}</span>
+          {recent.map((p) => (
+            <div key={p.sessionId} style={{ ...row, cursor: "default", fontSize: 13 }}>
+              <button
+                className="ga-btn"
+                aria-label={p.excluded ? t("trInclude") : t("trExclude")}
+                style={{ padding: "2px 7px", fontSize: 12, flexShrink: 0, ...(p.excluded ? { color: "#E8A27F", borderColor: "#E8A27F" } : { color: "#D6E24B", borderColor: "#33312a" }) }}
+                onClick={() => onToggleExclude(p.sessionId, exId)}
+              >{p.excluded ? "✕" : "✓"}</button>
+              <span className="ga-mono" style={{ color: "#9a978c", opacity: p.excluded ? 0.5 : 1 }}>{fmtShort(p.date)}</span>
+              <span className="ga-mono" style={{ textAlign: "right", flex: 1, opacity: p.excluded ? 0.45 : 1, textDecoration: p.excluded ? "line-through" : "none" }}>
+                {fmtSets(p.entry)}{p.pr && <span style={{ color: "#D6E24B" }}> ★</span>}
+              </span>
             </div>
           ))}
-          <div style={{ ...sub, marginTop: 8 }}>{t("trPrInfo")}</div>
+          {listAll.length > 5 && (
+            <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginTop: 8 }} onClick={() => setShowAll((v) => !v)}>
+              {showAll ? t("trShowLess") : t("trShowAll", { n: listAll.length })}
+            </button>
+          )}
+          <div style={{ ...sub, marginTop: 8 }}>{t("trExcludeInfo")}</div>
+          <div style={{ ...sub, marginTop: 4 }}>{t("trPrInfo")}</div>
         </div>
       </div>
     );
@@ -763,10 +789,10 @@ function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
           {g.exIds.length === 0 && <div style={{ ...sub, padding: "10px 0" }}>{t("trNoData")}</div>}
           {g.exIds.map((id) => {
             const ex = exercisesById[id];
-            const pr = byEx[id].filter((p) => p.date >= from);
+            const pr = byEx[id].filter((p) => p.date >= from && !p.excluded);
             const cur = pr.length ? pr[pr.length - 1].e1rm : 0;
             return (
-              <div key={id} style={row} onClick={() => { setExId(id); setMetric("e1rm"); }}>
+              <div key={id} style={row} onClick={() => { setExId(id); setMetric("e1rm"); setShowAll(false); }}>
                 <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{exName(ex)}</span>
                 <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                   <Spark values={pr.map((p) => p.e1rm)} />
@@ -857,7 +883,8 @@ function GymAgent() {
     setLang(l);
     try { localStorage.setItem(LANG_KEY, l); } catch (e) {}
   }
-  const exName = (ex) => (ex ? (lang === "en" && EXERCISE_EN[ex.id] ? EXERCISE_EN[ex.id] : ex.name) : "");
+  // customName: nome scelto da te per un esercizio predefinito (il merge della libreria non lo tocca).
+  const exName = (ex) => (ex ? (ex.customName || (lang === "en" && EXERCISE_EN[ex.id] ? EXERCISE_EN[ex.id] : ex.name)) : "");
   const catName = (c) => (lang === "en" ? CATEGORY_EN[c] || c : c);
   const lbl = (s) => (lang === "en" && LABEL_EN[s] ? LABEL_EN[s] : s);
 
@@ -947,7 +974,7 @@ function GymAgent() {
   );
   function lastEntryOf(exId) {
     for (const s of pastSessions) {
-      const e = s.entries.find((x) => x.exerciseId === exId && (!Array.isArray(x.sets) || x.sets.length > 0));
+      const e = s.entries.find((x) => x.exerciseId === exId && !x.excluded && (!Array.isArray(x.sets) || x.sets.length > 0));
       if (e) return { date: s.date, entry: e };
     }
     return null;
@@ -1046,7 +1073,9 @@ function GymAgent() {
       if (!sets) {
         sets = (entry.sets || []).map((s) => ({ weight: str(s.weight), reps: str(s.reps), weight2: str(s.dropWeight), reps2: str(s.dropReps) }));
       }
-      out[entry.exerciseId] = { sets, note: keepNotes ? entry.note || "" : "", mode, pairId, rest: entry.rest != null ? entry.rest : null };
+      const partnerEx = mode === "superset" ? entries.find((e) => e.exerciseId === pairId) : null;
+      out[entry.exerciseId] = { sets, note: keepNotes ? entry.note || "" : "", mode, pairId, rest: entry.rest != null ? entry.rest : null,
+        excluded: keepNotes && entry.excluded ? true : undefined, excluded2: keepNotes && partnerEx && partnerEx.excluded ? true : undefined };
     });
     return out;
   }
@@ -1203,8 +1232,25 @@ function GymAgent() {
     const name = renameVal.trim();
     if (!name) return;
     // Il nome vive nella libreria: cambia anche nello storico, perché le sessioni puntano all'id.
-    persist({ ...data, exercises: data.exercises.map((e) => (e.id === exId ? { ...e, name } : e)) });
+    // Esercizi tuoi: cambia il nome. Predefiniti: salva customName (se torni al nome originale, lo rimuove).
+    persist({ ...data, exercises: data.exercises.map((e) => {
+      if (e.id !== exId) return e;
+      if (String(e.id).startsWith("custom-")) return { ...e, name };
+      const { customName, ...rest } = e;
+      return name === e.name ? rest : { ...rest, customName: name };
+    }) });
     setRenamingId(null);
+  }
+  // Esclude/reinclude una sessione di un esercizio dai calcoli del trend (salvato nei dati, quindi sincronizzato).
+  function toggleExclude(sessionId, exId) {
+    persist({ ...data, sessions: data.sessions.map((s) => (s.id !== sessionId ? s : {
+      ...s,
+      entries: s.entries.map((e) => {
+        if (e.exerciseId !== exId) return e;
+        if (e.excluded) { const { excluded, ...rest } = e; return rest; }
+        return { ...e, excluded: true };
+      }),
+    })) });
   }
   function setRest(exId, val) {
     setToday((t0) => ({ ...t0, [exId]: { ...t0[exId], rest: val } }));
@@ -1246,7 +1292,7 @@ function GymAgent() {
       }));
       if (entry.mode === "drop") {
         entries.push({
-          exerciseId: exId, note: entry.note || "", drop: true, ...(entry.rest != null ? { rest: entry.rest } : {}),
+          exerciseId: exId, note: entry.note || "", drop: true, ...(entry.rest != null ? { rest: entry.rest } : {}), ...(entry.excluded ? { excluded: true } : {}),
           sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => (
             validPair(s.weight2, s.reps2)
               ? { weight: s.weight, reps: s.reps, dropWeight: s.weight2, dropReps: s.reps2 }
@@ -1256,16 +1302,16 @@ function GymAgent() {
       } else if (entry.mode === "superset" && entry.pairId && exercisesById[entry.pairId] && !today[entry.pairId]) {
         // Salvato come 2 entry collegate: storico e "ultima volta" restano separati per esercizio.
         entries.push({
-          exerciseId: exId, note: entry.note || "", superset: entry.pairId, ...(entry.rest != null ? { rest: entry.rest } : {}),
+          exerciseId: exId, note: entry.note || "", superset: entry.pairId, ...(entry.rest != null ? { rest: entry.rest } : {}), ...(entry.excluded ? { excluded: true } : {}),
           sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => ({ weight: s.weight, reps: s.reps })),
         });
         entries.push({
-          exerciseId: entry.pairId, note: "", supersetOf: exId,
+          exerciseId: entry.pairId, note: "", supersetOf: exId, ...(entry.excluded2 ? { excluded: true } : {}),
           sets: parsed.filter((s) => validPair(s.weight2, s.reps2)).map((s) => ({ weight: s.weight2, reps: s.reps2 })),
         });
       } else {
         entries.push({
-          exerciseId: exId, note: entry.note || "", ...(entry.rest != null ? { rest: entry.rest } : {}),
+          exerciseId: exId, note: entry.note || "", ...(entry.rest != null ? { rest: entry.rest } : {}), ...(entry.excluded ? { excluded: true } : {}),
           sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => ({ weight: s.weight, reps: s.reps })),
         });
       }
@@ -1555,12 +1601,12 @@ function GymAgent() {
                       {mode === "superset" && pairEx && entry.showLast && renderLastTime(pairEx.id, exName(pairEx))}
                     </div>
                     <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                      {String(exId).startsWith("custom-") && (
+                      {(
                         <button
                           className="ga-btn"
                           title={t("renameTitle")}
                           style={{ padding: "6px 8px", ...(renamingId === exId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}) }}
-                          onClick={() => { setRenamingId((v) => (v === exId ? null : exId)); setRenameVal(ex.name); }}
+                          onClick={() => { setRenamingId((v) => (v === exId ? null : exId)); setRenameVal(exName(ex)); }}
                         >✏️</button>
                       )}
                       <button
@@ -1754,7 +1800,7 @@ function GymAgent() {
         )}
 
         {tab === "trend" && (
-          <TrendPage sessions={data.sessions} exercisesById={exercisesById} exName={exName} catName={catName} lbl={lbl} t={t} />
+          <TrendPage sessions={data.sessions} exercisesById={exercisesById} exName={exName} catName={catName} lbl={lbl} t={t} onToggleExclude={toggleExclude} />
         )}
 
         {tab === "weight" && (
@@ -1857,7 +1903,7 @@ function GymAgent() {
                       </div>
                       {isOpen && (
                         <div style={{ padding: "4px 0 12px 0" }}>
-                          {String(ex.id).startsWith("custom-") && (
+                          {(
                             renamingId === ex.id ? (
                               <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
                                 <input
@@ -1872,7 +1918,7 @@ function GymAgent() {
                                 <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => setRenamingId(null)}>✕</button>
                               </div>
                             ) : (
-                              <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginBottom: 8 }} onClick={() => { setRenamingId(ex.id); setRenameVal(ex.name); }}>✏️ {t("renameTitle")}</button>
+                              <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginBottom: 8 }} onClick={() => { setRenamingId(ex.id); setRenameVal(exName(ex)); }}>✏️ {t("renameTitle")}</button>
                             )
                           )}
                           {rows.length === 0 ? <div style={{ fontSize: 12, color: "#9a978c" }}>{t("noHistory")}</div> : (

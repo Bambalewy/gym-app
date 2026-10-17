@@ -289,7 +289,7 @@ function parseWeightList(text, todayIso) {
 
 const I18N = {
   it: {
-    tabToday: "📋 Oggi", tabHistory: "🕒 Storico", tabLibrary: "📚 Esercizi", tabWeight: "⚖️ Peso", tabSettings: "⚙️ Impostazioni",
+    tabToday: "📋 Oggi", tabHistory: "🕒 Storico", tabLibrary: "📚 Esercizi", tabWeight: "⚖️ Peso", tabTrend: "📈 Trend", tabSettings: "⚙️ Impostazioni",
     syncOffline: "non collegato a Google", syncSyncing: "sincronizzazione...", syncSynced: "sincronizzato con Drive", syncError: "errore di sincronizzazione",
     syncNoticeOverwritten: "Su Drive c'erano dati piu recenti: questo dispositivo e stato aggiornato. Eventuali modifiche fatte offline qui potrebbero essere state sostituite.",
     workoutDate: "Data allenamento", addExercise: "➕ Aggiungi esercizio", noExercises: "Nessun esercizio selezionato.",
@@ -299,7 +299,12 @@ const I18N = {
     addSet: "+ serie", applyFirst: "📋 Applica 1ª serie a tutte",
     notePh: "Nota (facoltativa, es. sensazioni, tecnica...)", otherPh: "es. 3x15, oppure 2 min",
     savePartial: "💾 Salva parziale (continua)", saveFinal: "✅ Salva allenamento",
-    superset: "Superset", dropset: "Drop set", pairWith: "+ in coppia con", choose: "— scegli esercizio —",
+    trR4: "4 sett", trR12: "12 sett", trR26: "6 mesi", trStable: "stabile", trNeedMore: "Servono almeno 2 sessioni per il grafico",
+    trSetsWeek: "Serie a settimana, per gruppo (tocca un gruppo)", trArrowInfo: "Freccia: volume delle ultime 4 settimane rispetto alle 4 precedenti.",
+    trAllGroups: "‹ Tutti i gruppi", trBack: "‹ Indietro", trGroupVol: "Volume settimanale (kg × rip)", trExList: "Esercizi · massimale stimato",
+    trE1rm: "Massimale stimato", trTop: "Serie migliore", trVol: "Volume", trRecord: "Record", trChange: "Nel periodo", trSessions: "Sessioni",
+    trLast: "Ultime sessioni", trPrInfo: "★ = nuovo record di massimale stimato", trNoData: "Nessun dato in questo periodo",
+    superset: "Superset", dropset: "Drop set", rest: "Recupero", renameTitle: "Rinomina esercizio", renameSave: "Salva nome", pairWith: "+ in coppia con", choose: "— scegli esercizio —",
     lastTime: "Ultima volta ({d}): {s}", firstTime: "Prima volta per questo esercizio",
     prevNotes: "📝 Note precedenti", showMore: "mostra altre ({n})", hide: "nascondi",
     seeTrend: "Vedi andamento esercizio:", allSessions: "-- tutte le sessioni --", thDate: "Data", thSets: "Serie",
@@ -322,7 +327,7 @@ const I18N = {
     wPasteOk: "Importate {n} pesate.", wPasteBad: "{n} righe non riconosciute e saltate.", wPasteNone: "Nessuna pesata riconosciuta.", wPasteInfo: "Le date già presenti vengono aggiornate con il nuovo valore.",
   },
   en: {
-    tabToday: "📋 Today", tabHistory: "🕒 History", tabLibrary: "📚 Exercises", tabWeight: "⚖️ Weight", tabSettings: "⚙️ Settings",
+    tabToday: "📋 Today", tabHistory: "🕒 History", tabLibrary: "📚 Exercises", tabWeight: "⚖️ Weight", tabTrend: "📈 Trends", tabSettings: "⚙️ Settings",
     syncOffline: "not connected to Google", syncSyncing: "syncing...", syncSynced: "synced with Drive", syncError: "sync error",
     syncNoticeOverwritten: "Drive had newer data: this device has been updated. Any changes made offline here may have been replaced.",
     workoutDate: "Workout date", addExercise: "➕ Add exercise", noExercises: "No exercises selected.",
@@ -332,7 +337,12 @@ const I18N = {
     addSet: "+ set", applyFirst: "📋 Apply set 1 to all",
     notePh: "Note (optional, e.g. feel, technique...)", otherPh: "e.g. 3x15, or 2 min",
     savePartial: "💾 Save progress (continue)", saveFinal: "✅ Save workout",
-    superset: "Superset", dropset: "Drop set", pairWith: "+ paired with", choose: "— choose exercise —",
+    trR4: "4 wk", trR12: "12 wk", trR26: "6 mo", trStable: "steady", trNeedMore: "At least 2 sessions needed for the chart",
+    trSetsWeek: "Sets per week, by muscle group (tap a group)", trArrowInfo: "Arrow: volume of the last 4 weeks vs the previous 4.",
+    trAllGroups: "‹ All groups", trBack: "‹ Back", trGroupVol: "Weekly volume (kg × reps)", trExList: "Exercises · estimated 1RM",
+    trE1rm: "Estimated 1RM", trTop: "Top set", trVol: "Volume", trRecord: "Record", trChange: "In period", trSessions: "Sessions",
+    trLast: "Recent sessions", trPrInfo: "★ = new estimated 1RM record", trNoData: "No data in this period",
+    superset: "Superset", dropset: "Drop set", rest: "Rest", renameTitle: "Rename exercise", renameSave: "Save name", pairWith: "+ paired with", choose: "— choose exercise —",
     lastTime: "Last time ({d}): {s}", firstTime: "First time doing this exercise",
     prevNotes: "📝 Previous notes", showMore: "show more ({n})", hide: "hide",
     seeTrend: "Exercise progress:", allSessions: "-- all sessions --", thDate: "Date", thSets: "Sets",
@@ -389,6 +399,14 @@ function fmtSets(entry) {
   }).join(" / ");
 }
 const str = (v) => (v == null ? "" : String(v));
+// Tempo di recupero: da 0" a 3' a passi di 15 secondi.
+const REST_OPTIONS = Array.from({ length: 13 }, (_, i) => i * 15);
+function fmtRest(sec) {
+  if (sec == null || sec === "") return "—";
+  const m = Math.floor(sec / 60), r = sec % 60;
+  if (m === 0) return `${r}"`;
+  return r === 0 ? `${m}'` : `${m}'${r}"`;
+}
 
 /* =========================================================
    STORAGE LOCALE (sempre attivo, offline-first)
@@ -556,6 +574,238 @@ function WeightChart({ points, avg, t }) {
 }
 
 /* =========================================================
+   TREND: gruppi muscolari ed esercizi (SVG a mano, offline)
+   ========================================================= */
+// Massimale stimato (Epley). Conta solo la serie principale, non la parte "drop".
+const epley = (w, r) => (r <= 1 ? w : w * (1 + r / 30));
+function entryStats(entry) {
+  const sets = Array.isArray(entry.sets) ? entry.sets : [];
+  let e1rm = 0, top = 0, vol = 0;
+  sets.forEach((s) => {
+    const w = Number(s.weight) || 0, r = Number(s.reps) || 0;
+    vol += w * r;
+    if (s.dropWeight != null && s.dropReps != null) vol += (Number(s.dropWeight) || 0) * (Number(s.dropReps) || 0);
+    if (r > 0) { e1rm = Math.max(e1rm, epley(w, r)); top = Math.max(top, w); }
+  });
+  return { e1rm, top, vol, nSets: sets.length };
+}
+const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+const TR_UP = "#9BD47A", TR_DOWN = "#E8A27F";
+
+function TrendDelta({ delta, t }) {
+  if (delta == null) return null;
+  if (delta > 2) return <span style={{ color: TR_UP }}>▲ {delta}%</span>;
+  if (delta < -2) return <span style={{ color: TR_DOWN }}>▼ {-delta}%</span>;
+  return <span style={{ color: "#9a978c" }}>= {t("trStable")}</span>;
+}
+
+function TrendChart({ points, fmt, t }) {
+  const W = 360, H = 170, L = 40, R = 8, T = 18, B = 20;
+  if (points.length < 2) {
+    return <div style={{ fontSize: 12, color: "#9a978c", padding: "20px 0", textAlign: "center" }}>{t("trNeedMore")}</div>;
+  }
+  const ms = (iso) => new Date(iso + "T00:00:00").getTime();
+  const x0 = ms(points[0].date), x1 = ms(points[points.length - 1].date);
+  const vals = points.map((p) => p.v);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1) { const mid = (hi + lo) / 2; lo = mid - 0.5; hi = mid + 0.5; }
+  const pad = (hi - lo) * 0.12;
+  lo -= pad; hi += pad;
+  const sx = (iso) => L + (x1 === x0 ? 0.5 : (ms(iso) - x0) / (x1 - x0)) * (W - L - R);
+  const sy = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const ticks = [0, 1, 2, 3].map((i) => lo + ((hi - lo) * i) / 3);
+  const d = points.map((p, i) => `${i ? "L" : "M"}${sx(p.date).toFixed(1)},${sy(p.v).toFixed(1)}`).join(" ");
+  const last = points[points.length - 1];
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", marginTop: 6 }} role="img" aria-label="trend chart">
+      {ticks.map((v, i) => (
+        <g key={i}>
+          <line x1={L} x2={W - R} y1={sy(v)} y2={sy(v)} stroke="#26241f" strokeWidth="1" />
+          <text x={L - 6} y={sy(v) + 4} textAnchor="end" fontSize="11" fill="#9a978c" fontFamily="monospace">{fmt(v)}</text>
+        </g>
+      ))}
+      <text x={L} y={H - 6} fontSize="11" fill="#9a978c" fontFamily="monospace">{fmtShort(points[0].date)}</text>
+      <text x={W - R} y={H - 6} fontSize="11" fill="#9a978c" fontFamily="monospace" textAnchor="end">{fmtShort(last.date)}</text>
+      <path d={d} fill="none" stroke="#D6E24B" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {points.map((p, i) => <circle key={i} cx={sx(p.date)} cy={sy(p.v)} r={points.length > 40 ? 2 : 3} fill="#D6E24B" />)}
+      <text x={sx(last.date) - 4} y={sy(last.v) - 8} textAnchor="end" fontSize="12" fill="#D6E24B" fontFamily="monospace">{fmt(last.v)}</text>
+    </svg>
+  );
+}
+
+function Spark({ values }) {
+  const w = 64, h = 20;
+  if (values.length < 2) return <span style={{ width: w, display: "inline-block" }} />;
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (hi === lo) { hi += 1; lo -= 1; }
+  const d = values.map((v, i) => `${i ? "L" : "M"}${((i * w) / (values.length - 1)).toFixed(1)},${(h - 2 - ((v - lo) / (hi - lo)) * (h - 4)).toFixed(1)}`).join(" ");
+  return <svg width={w} height={h} style={{ display: "block" }}><path d={d} fill="none" stroke="#D6E24B" strokeWidth="1.5" /></svg>;
+}
+
+function TrendPage({ sessions, exercisesById, exName, catName, lbl, t }) {
+  const [range, setRange] = useState(12); // settimane
+  const [group, setGroup] = useState(null);
+  const [exId, setExId] = useState(null);
+  const [metric, setMetric] = useState("e1rm");
+  const today = todayISO();
+  const from = addDaysISO(today, -range * 7 + 1);
+
+  // Per ogni esercizio a peso: una riga per sessione, in ordine cronologico.
+  const byEx = useMemo(() => {
+    const out = {};
+    const asc = [...sessions].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    asc.forEach((s) => (s.entries || []).forEach((e) => {
+      const ex = exercisesById[e.exerciseId];
+      if (!ex || ex.type !== "weight" || !Array.isArray(e.sets) || !e.sets.length) return;
+      (out[e.exerciseId] = out[e.exerciseId] || []).push({ date: s.date, entry: e, ...entryStats(e) });
+    }));
+    return out;
+  }, [sessions, exercisesById]);
+
+  // Per gruppo: serie/settimana nel periodo, volume settimanale, freccia ultime 4 sett vs 4 precedenti.
+  const groups = useMemo(() => CATEGORIES.map((cat) => {
+    let sets = 0, volRecent = 0, volPrev = 0;
+    const weekly = Array(range).fill(0);
+    const exIds = [];
+    Object.keys(byEx).forEach((id) => {
+      if (exercisesById[id].category !== cat) return;
+      let used = false;
+      byEx[id].forEach((p) => {
+        const age = daysBetween(p.date, today);
+        if (age < 0) return;
+        if (age < range * 7) { sets += p.nSets; weekly[range - 1 - Math.floor(age / 7)] += p.vol; used = true; }
+        if (age < 28) volRecent += p.vol;
+        else if (age < 56) volPrev += p.vol;
+      });
+      if (used) exIds.push(id);
+    });
+    exIds.sort((a, b) => byEx[b].filter((p) => p.date >= from).length - byEx[a].filter((p) => p.date >= from).length);
+    const delta = volPrev > 0 ? Math.round(((volRecent - volPrev) / volPrev) * 100) : null;
+    return { cat, setsWeek: sets / range, delta, weekly, exIds };
+  }), [byEx, range, today, from, exercisesById]);
+
+  const card = { background: "#1c1c19", border: "1px solid #26241f", borderRadius: 10, padding: 14, marginBottom: 12 };
+  const sub = { fontSize: 12, color: "#9a978c" };
+  const row = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "9px 0", borderTop: "1px solid #26241f", fontSize: 14, cursor: "pointer" };
+  const on = { background: "#D6E24B", borderColor: "#D6E24B", color: "#121210" };
+  const off = { color: "#EDEAE0" };
+  const fmtKgV = (v) => fmtNum(v, 1);
+  const fmtVol = (v) => fmtNum(v, 0);
+
+  const rangeBar = (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+      {[[4, "trR4"], [12, "trR12"], [26, "trR26"]].map(([r, k]) => (
+        <button key={r} className="ga-chip" style={range === r ? on : off} onClick={() => setRange(r)}>{t(k)}</button>
+      ))}
+    </div>
+  );
+
+  // ---- Dettaglio esercizio
+  if (exId && exercisesById[exId]) {
+    const ex = exercisesById[exId];
+    const unit = lbl(ex.unit || "kg");
+    const all = byEx[exId] || [];
+    const inRange = all.filter((p) => p.date >= from);
+    const fmt = metric === "vol" ? fmtVol : fmtKgV;
+    const unitTxt = metric === "vol" ? "" : " " + unit;
+    const pts = inRange.map((p) => ({ date: p.date, v: p[metric] }));
+    const record = all.length ? Math.max(...all.map((p) => p[metric])) : 0;
+    const first = inRange[0], lastP = inRange[inRange.length - 1];
+    const change = first && lastP && first[metric] > 0 && inRange.length > 1 ? Math.round(((lastP[metric] - first[metric]) / first[metric]) * 100) : null;
+    const recent = all.map((p, i) => ({ ...p, pr: i > 0 && p.e1rm > Math.max(...all.slice(0, i).map((q) => q.e1rm)) })).slice(-5).reverse();
+    return (
+      <div>
+        {rangeBar}
+        <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginBottom: 10 }} onClick={() => setExId(null)}>{t("trBack")}</button>
+        <div style={card}>
+          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>{exName(ex)}</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[["e1rm", "trE1rm"], ["top", "trTop"], ["vol", "trVol"]].map(([m, k]) => (
+              <button key={m} className="ga-chip" style={metric === m ? on : off} onClick={() => setMetric(m)}>{t(k)}</button>
+            ))}
+          </div>
+          <TrendChart points={pts} fmt={fmt} t={t} />
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <div className="ga-stat"><div style={sub}>{t("trRecord")}</div><div style={{ fontSize: 15, marginTop: 2 }}>{fmt(record)}{unitTxt}</div></div>
+            <div className="ga-stat"><div style={sub}>{t("trChange")}</div><div style={{ fontSize: 15, marginTop: 2 }}>{change == null ? "—" : <TrendDelta delta={change} t={t} />}</div></div>
+            <div className="ga-stat"><div style={sub}>{t("trSessions")}</div><div style={{ fontSize: 15, marginTop: 2 }}>{inRange.length}</div></div>
+          </div>
+        </div>
+        <div style={card}>
+          <div style={{ ...sub, marginBottom: 4 }}>{t("trLast")}</div>
+          {recent.map((p, i) => (
+            <div key={i} style={{ ...row, cursor: "default", fontSize: 13 }}>
+              <span className="ga-mono" style={{ color: "#9a978c" }}>{fmtShort(p.date)}</span>
+              <span className="ga-mono" style={{ textAlign: "right" }}>{fmtSets(p.entry)}{p.pr && <span style={{ color: "#D6E24B" }}> ★</span>}</span>
+            </div>
+          ))}
+          <div style={{ ...sub, marginTop: 8 }}>{t("trPrInfo")}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Dettaglio gruppo
+  const g = group && groups.find((x) => x.cat === group);
+  if (g) {
+    const pts = g.weekly.map((v, i) => ({ date: addDaysISO(today, -(range - 1 - i) * 7), v }));
+    return (
+      <div>
+        {rangeBar}
+        <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginBottom: 10 }} onClick={() => setGroup(null)}>{t("trAllGroups")}</button>
+        <div style={card}>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>{catName(g.cat)} <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6 }}><TrendDelta delta={g.delta} t={t} /></span></div>
+          <div style={sub}>{t("trGroupVol")}</div>
+          <TrendChart points={pts} fmt={fmtVol} t={t} />
+        </div>
+        <div style={card}>
+          <div style={{ ...sub, marginBottom: 4 }}>{t("trExList")}</div>
+          {g.exIds.length === 0 && <div style={{ ...sub, padding: "10px 0" }}>{t("trNoData")}</div>}
+          {g.exIds.map((id) => {
+            const ex = exercisesById[id];
+            const pr = byEx[id].filter((p) => p.date >= from);
+            const cur = pr.length ? pr[pr.length - 1].e1rm : 0;
+            return (
+              <div key={id} style={row} onClick={() => { setExId(id); setMetric("e1rm"); }}>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{exName(ex)}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <Spark values={pr.map((p) => p.e1rm)} />
+                  <span className="ga-mono" style={{ fontSize: 12, minWidth: 64, textAlign: "right" }}>{fmtKgV(cur)} {lbl(ex.unit || "kg")}</span>
+                  <span style={{ color: "#9a978c" }}>›</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Panoramica
+  const maxSets = Math.max(1, ...groups.map((x) => x.setsWeek));
+  const anyData = groups.some((x) => x.setsWeek > 0);
+  return (
+    <div>
+      {rangeBar}
+      <div style={card}>
+        <div style={{ ...sub, marginBottom: 4 }}>{t("trSetsWeek")}</div>
+        {!anyData && <div style={{ ...sub, padding: "10px 0" }}>{t("trNoData")}</div>}
+        {anyData && groups.map((x) => (
+          <div key={x.cat} style={{ ...row, display: "grid", gridTemplateColumns: "80px 1fr auto", fontSize: 13 }} onClick={() => setGroup(x.cat)}>
+            <span>{catName(x.cat)}</span>
+            <div style={{ background: "#262622", borderRadius: 4, height: 12 }}>
+              <div style={{ width: `${(x.setsWeek / maxSets) * 100}%`, background: "#D6E24B", height: 12, borderRadius: 4 }} />
+            </div>
+            <span className="ga-mono" style={{ fontSize: 12, textAlign: "right", minWidth: 84 }}>{fmtNum(x.setsWeek, 1)} <TrendDelta delta={x.delta} t={t} /></span>
+          </div>
+        ))}
+        <div style={{ ...sub, marginTop: 8 }}>{t("trArrowInfo")}</div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    APP
    ========================================================= */
 function GymAgent() {
@@ -569,6 +819,9 @@ function GymAgent() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [today, setToday] = useState({});
   const [editingId, setEditingId] = useState(null); // sessione in modifica (esclusa da "ultima volta" e note precedenti)
+  const [renamingId, setRenamingId] = useState(null); // esercizio personalizzato in rinomina
+  const [renameVal, setRenameVal] = useState("");
+  const [restOpenId, setRestOpenId] = useState(null); // card con elenco recupero aperto
   const [openNotes, setOpenNotes] = useState({}); // quali box "note precedenti" sono espansi
   const [newExOpen, setNewExOpen] = useState(false);
   const [replacingId, setReplacingId] = useState(null); // id esercizio in fase di sostituzione
@@ -771,7 +1024,7 @@ function GymAgent() {
       // seconda metà di un superset: viene fusa nella card del primo esercizio
       if (entry.supersetOf && entries.some((e) => e.exerciseId === entry.supersetOf && e.superset === entry.exerciseId) && exercisesById[entry.supersetOf]) return;
       if (ex.type !== "weight") {
-        out[entry.exerciseId] = { note: keepNotes ? entry.note || "" : "" };
+        out[entry.exerciseId] = { note: keepNotes ? entry.note || "" : "", rest: entry.rest != null ? entry.rest : null };
         return;
       }
       let mode = entry.drop ? "drop" : null;
@@ -793,7 +1046,7 @@ function GymAgent() {
       if (!sets) {
         sets = (entry.sets || []).map((s) => ({ weight: str(s.weight), reps: str(s.reps), weight2: str(s.dropWeight), reps2: str(s.dropReps) }));
       }
-      out[entry.exerciseId] = { sets, note: keepNotes ? entry.note || "" : "", mode, pairId };
+      out[entry.exerciseId] = { sets, note: keepNotes ? entry.note || "" : "", mode, pairId, rest: entry.rest != null ? entry.rest : null };
     });
     return out;
   }
@@ -861,8 +1114,8 @@ function GymAgent() {
       if (built) return { ...built, showLast: true };
     }
     return ex.type === "weight"
-      ? { sets: Array.from({ length: ex.defaultSets || 3 }, () => ({ weight: "", reps: "", weight2: "", reps2: "" })), note: "", mode: null, pairId: null, showLast: true }
-      : { note: "", showLast: true };
+      ? { sets: Array.from({ length: ex.defaultSets || 3 }, () => ({ weight: "", reps: "", weight2: "", reps2: "" })), note: "", mode: null, pairId: null, rest: null, showLast: true }
+      : { note: "", rest: null, showLast: true };
   }
 
   function addExerciseToToday(ex) {
@@ -946,6 +1199,17 @@ function GymAgent() {
   function removeSetRow(exId, idx) {
     setToday((t0) => { const entry = { ...t0[exId] }; entry.sets = entry.sets.filter((_, i) => i !== idx); return { ...t0, [exId]: entry }; });
   }
+  function renameExercise(exId) {
+    const name = renameVal.trim();
+    if (!name) return;
+    // Il nome vive nella libreria: cambia anche nello storico, perché le sessioni puntano all'id.
+    persist({ ...data, exercises: data.exercises.map((e) => (e.id === exId ? { ...e, name } : e)) });
+    setRenamingId(null);
+  }
+  function setRest(exId, val) {
+    setToday((t0) => ({ ...t0, [exId]: { ...t0[exId], rest: val } }));
+    setRestOpenId(null);
+  }
   function updateNote(exId, val) {
     setToday((t0) => ({ ...t0, [exId]: { ...t0[exId], note: val } }));
   }
@@ -972,7 +1236,7 @@ function GymAgent() {
       const entry = today[exId];
       if (!ex) return;
       if (ex.type !== "weight") {
-        entries.push({ exerciseId: exId, note: entry.note });
+        entries.push({ exerciseId: exId, note: entry.note, ...(entry.rest != null ? { rest: entry.rest } : {}) });
         return;
       }
       // Fix 4: valida i numeri (parseFloat("-") o "1.2.3" -> NaN) e scarta i set invalidi.
@@ -982,7 +1246,7 @@ function GymAgent() {
       }));
       if (entry.mode === "drop") {
         entries.push({
-          exerciseId: exId, note: entry.note || "", drop: true,
+          exerciseId: exId, note: entry.note || "", drop: true, ...(entry.rest != null ? { rest: entry.rest } : {}),
           sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => (
             validPair(s.weight2, s.reps2)
               ? { weight: s.weight, reps: s.reps, dropWeight: s.weight2, dropReps: s.reps2 }
@@ -992,7 +1256,7 @@ function GymAgent() {
       } else if (entry.mode === "superset" && entry.pairId && exercisesById[entry.pairId] && !today[entry.pairId]) {
         // Salvato come 2 entry collegate: storico e "ultima volta" restano separati per esercizio.
         entries.push({
-          exerciseId: exId, note: entry.note || "", superset: entry.pairId,
+          exerciseId: exId, note: entry.note || "", superset: entry.pairId, ...(entry.rest != null ? { rest: entry.rest } : {}),
           sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => ({ weight: s.weight, reps: s.reps })),
         });
         entries.push({
@@ -1001,7 +1265,7 @@ function GymAgent() {
         });
       } else {
         entries.push({
-          exerciseId: exId, note: entry.note || "",
+          exerciseId: exId, note: entry.note || "", ...(entry.rest != null ? { rest: entry.rest } : {}),
           sets: parsed.filter((s) => validPair(s.weight, s.reps)).map((s) => ({ weight: s.weight, reps: s.reps })),
         });
       }
@@ -1244,6 +1508,7 @@ function GymAgent() {
       <div style={{ display: "flex", gap: 4, padding: "14px 20px 0 20px", borderBottom: "1px solid #26241f", marginTop: 12, overflowX: "auto" }}>
         <button className={`ga-tab ${tab === "log" ? "active" : ""}`} onClick={() => setTab("log")}>{t("tabToday")}</button>
         <button className={`ga-tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>{t("tabHistory")}</button>
+        <button className={`ga-tab ${tab === "trend" ? "active" : ""}`} onClick={() => setTab("trend")}>{t("tabTrend")}</button>
         <button className={`ga-tab ${tab === "weight" ? "active" : ""}`} onClick={() => setTab("weight")}>{t("tabWeight")}</button>
         <button className={`ga-tab ${tab === "library" ? "active" : ""}`} onClick={() => setTab("library")}>{t("tabLibrary")}</button>
         <button className={`ga-tab ${tab === "settings" ? "active" : ""}`} onClick={() => setTab("settings")}>{t("tabSettings")}</button>
@@ -1290,6 +1555,14 @@ function GymAgent() {
                       {mode === "superset" && pairEx && entry.showLast && renderLastTime(pairEx.id, exName(pairEx))}
                     </div>
                     <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      {String(exId).startsWith("custom-") && (
+                        <button
+                          className="ga-btn"
+                          title={t("renameTitle")}
+                          style={{ padding: "6px 8px", ...(renamingId === exId ? { borderColor: "#D6E24B", color: "#D6E24B" } : {}) }}
+                          onClick={() => { setRenamingId((v) => (v === exId ? null : exId)); setRenameVal(ex.name); }}
+                        >✏️</button>
+                      )}
                       <button
                         className="ga-btn"
                         title={t("replaceTitle")}
@@ -1298,6 +1571,43 @@ function GymAgent() {
                       >🔄</button>
                       <button className="ga-btn" style={{ padding: "6px 8px" }} onClick={() => removeExerciseFromToday(exId)}>✕</button>
                     </div>
+                  </div>
+
+                  {renamingId === exId && (
+                    <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+                      <input
+                        className="ga-input"
+                        autoFocus
+                        value={renameVal}
+                        placeholder={t("exNamePh")}
+                        onChange={(e) => setRenameVal(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") renameExercise(exId); }}
+                      />
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", whiteSpace: "nowrap" }} onClick={() => renameExercise(exId)}>{t("renameSave")}</button>
+                      <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => setRenamingId(null)}>✕</button>
+                    </div>
+                  )}
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      className="ga-chip"
+                      aria-label={t("rest")}
+                      style={entry.rest != null ? { borderColor: "#D6E24B", color: "#D6E24B" } : { color: "#9a978c" }}
+                      onClick={() => setRestOpenId((v) => (v === exId ? null : exId))}
+                    >
+                      ⏱ {t("rest")}: {fmtRest(entry.rest)} {restOpenId === exId ? "▴" : "▾"}
+                    </button>
+                    {restOpenId === exId && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 8 }}>
+                        {REST_OPTIONS.map((v) => (
+                          <button
+                            key={v}
+                            className="ga-btn"
+                            style={{ padding: "7px 0", fontSize: 13, ...(entry.rest === v ? { background: "#D6E24B", borderColor: "#D6E24B", color: "#121210" } : {}) }}
+                            onClick={() => setRest(exId, v)}
+                          >{fmtRest(v)}</button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {replacingId === exId && (
@@ -1441,6 +1751,10 @@ function GymAgent() {
               </div>
             )}
           </div>
+        )}
+
+        {tab === "trend" && (
+          <TrendPage sessions={data.sessions} exercisesById={exercisesById} exName={exName} catName={catName} lbl={lbl} t={t} />
         )}
 
         {tab === "weight" && (

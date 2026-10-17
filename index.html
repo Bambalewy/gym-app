@@ -1857,6 +1857,24 @@ function GymAgent() {
                       </div>
                       {isOpen && (
                         <div style={{ padding: "4px 0 12px 0" }}>
+                          {String(ex.id).startsWith("custom-") && (
+                            renamingId === ex.id ? (
+                              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                                <input
+                                  className="ga-input"
+                                  autoFocus
+                                  value={renameVal}
+                                  placeholder={t("exNamePh")}
+                                  onChange={(e) => setRenameVal(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === "Enter") renameExercise(ex.id); }}
+                                />
+                                <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", whiteSpace: "nowrap" }} onClick={() => renameExercise(ex.id)}>{t("renameSave")}</button>
+                                <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => setRenamingId(null)}>✕</button>
+                              </div>
+                            ) : (
+                              <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginBottom: 8 }} onClick={() => { setRenamingId(ex.id); setRenameVal(ex.name); }}>✏️ {t("renameTitle")}</button>
+                            )
+                          )}
                           {rows.length === 0 ? <div style={{ fontSize: 12, color: "#9a978c" }}>{t("noHistory")}</div> : (
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                               <tbody>

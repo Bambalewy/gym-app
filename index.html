@@ -307,7 +307,7 @@ const I18N = {
     trExclude: "Escludi dal trend", trInclude: "Reincludi nel trend", trShowAll: "Mostra tutte ({n})", trShowLess: "Mostra meno",
     trExcludeInfo: "Tocca ✓ per escludere una sessione dal trend (es. peso segnato male), ✕ per reincluderla. Resta comunque nello storico.",
     superset: "Superset", dropset: "Drop set", rest: "Recupero", renameTitle: "Rinomina esercizio", renameSave: "Salva nome", pairWith: "+ in coppia con", choose: "— scegli esercizio —",
-    lastTime: "Ultima volta ({d}): {s}", firstTime: "Prima volta per questo esercizio",
+    lastTime: "Ultima volta ({d}): {s}", lastTimes: "Ultime volte", historyBox: "📊 Ultime volte", olderNotes: "📝 note più vecchie ({n})", volTotal: "Totale", firstTime: "Prima volta per questo esercizio",
     prevNotes: "📝 Note precedenti", showMore: "mostra altre ({n})", hide: "nascondi",
     seeTrend: "Vedi andamento esercizio:", allSessions: "-- tutte le sessioni --", thDate: "Data", thSets: "Serie",
     noHistoryEx: "Nessuno storico per questo esercizio.", noWorkouts: "Ancora nessun allenamento registrato.",
@@ -347,7 +347,7 @@ const I18N = {
     trExclude: "Exclude from trends", trInclude: "Include in trends", trShowAll: "Show all ({n})", trShowLess: "Show less",
     trExcludeInfo: "Tap ✓ to exclude a session from the trends (e.g. a mistyped weight), ✕ to bring it back. It stays in your history.",
     superset: "Superset", dropset: "Drop set", rest: "Rest", renameTitle: "Rename exercise", renameSave: "Save name", pairWith: "+ paired with", choose: "— choose exercise —",
-    lastTime: "Last time ({d}): {s}", firstTime: "First time doing this exercise",
+    lastTime: "Last time ({d}): {s}", lastTimes: "Recent sessions", historyBox: "📊 Recent sessions", olderNotes: "📝 older notes ({n})", volTotal: "Total", firstTime: "First time doing this exercise",
     prevNotes: "📝 Previous notes", showMore: "show more ({n})", hide: "hide",
     seeTrend: "Exercise progress:", allSessions: "-- all sessions --", thDate: "Date", thSets: "Sets",
     noHistoryEx: "No history for this exercise.", noWorkouts: "No workouts logged yet.",
@@ -403,6 +403,26 @@ function fmtSets(entry) {
   }).join(" / ");
 }
 const str = (v) => (v == null ? "" : String(v));
+// Volume = somma di peso x ripetizioni di ogni serie (peso come scritto, es. un singolo manubrio).
+const numOr0 = (v) => { const n = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(n) ? n : 0; };
+// Serie in compilazione ({weight,reps,weight2,reps2}). part: "main" (+ parte drop se drop set) oppure "pair" (2° esercizio del superset)
+function volumeOfToday(sets, mode, part) {
+  if (!Array.isArray(sets)) return 0;
+  return sets.reduce((tot, s) => {
+    if (part === "pair") return tot + numOr0(s.weight2) * numOr0(s.reps2);
+    let v = numOr0(s.weight) * numOr0(s.reps);
+    if (mode === "drop") v += numOr0(s.weight2) * numOr0(s.reps2);
+    return tot + v;
+  }, 0);
+}
+// Entry salvata ({weight,reps,dropWeight,dropReps})
+function volumeOfEntry(entry) {
+  if (!entry || !Array.isArray(entry.sets)) return 0;
+  return entry.sets.reduce((tot, s) => tot + numOr0(s.weight) * numOr0(s.reps) + numOr0(s.dropWeight) * numOr0(s.dropReps), 0);
+}
+function fmtVol(n, unit) {
+  return `${Math.round(n * 10) / 10}`.replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".") + " " + (unit || "kg");
+}
 // Tempo di recupero: da 0" a 3' a passi di 15 secondi.
 const REST_OPTIONS = Array.from({ length: 13 }, (_, i) => i * 15);
 function fmtRest(sec) {
@@ -979,6 +999,15 @@ function GymAgent() {
     }
     return null;
   }
+  function lastEntriesOf(exId, n) {
+    const out = [];
+    for (const s of pastSessions) {
+      const e = s.entries.find((x) => x.exerciseId === exId && !x.excluded && (!Array.isArray(x.sets) || x.sets.length > 0));
+      if (e) out.push({ date: s.date, entry: e });
+      if (out.length >= n) break;
+    }
+    return out;
+  }
   function previousNotes(exId) {
     const out = [];
     pastSessions.forEach((s) => {
@@ -1455,37 +1484,70 @@ function GymAgent() {
 
   // Riga "Ultima volta (gg/mm): ..." sotto il nome (solo per esercizi aggiunti/sostituiti a mano)
   function renderLastTime(exId, label) {
-    const last = lastEntryOf(exId);
-    const text = last ? t("lastTime", { d: fmtShort(last.date), s: fmtSets(last.entry) }) : t("firstTime");
+    const rows = lastEntriesOf(exId, 3);
+    const ex = exercisesById[exId];
+    const unit = ex ? lbl(ex.unit) : "kg";
+    if (rows.length === 0) {
+      return (
+        <div className="ga-mono" style={{ fontSize: 11, color: "#9a978c", marginTop: 4 }}>
+          {label ? <span style={{ color: "#7FC4E8" }}>{label} · </span> : null}{t("firstTime")}
+        </div>
+      );
+    }
     return (
-      <div className="ga-mono" style={{ fontSize: 11, color: "#9a978c", marginTop: 4 }}>
-        {label ? <span style={{ color: "#7FC4E8" }}>{label} · </span> : null}{text}
+      <div className="ga-mono" style={{ fontSize: 11, color: "#9a978c", marginTop: 4, lineHeight: 1.5 }}>
+        <div>{label ? <span style={{ color: "#7FC4E8" }}>{label} · </span> : null}{t("lastTimes")}:</div>
+        {rows.map((r, i) => {
+          const vol = volumeOfEntry(r.entry);
+          return (
+            <div key={i} style={i === 0 ? { color: "#c9c6ba" } : {}}>
+              {fmtShort(r.date)}: {fmtSets(r.entry)}{vol > 0 ? <span style={{ color: "#D6E24B", whiteSpace: "nowrap" }}> · {fmtVol(vol, unit)}</span> : null}
+            </div>
+          );
+        })}
       </div>
     );
   }
 
-  // Box "Note precedenti" in sola lettura
+  // Box "Ultime volte": ultime 3 sessioni (serie + totale + nota del giorno) e, a richiesta, le note più vecchie
   function renderPrevNotes(exId, key, title) {
-    const notes = previousNotes(exId);
-    if (notes.length === 0) return null;
+    const rows = lastEntriesOf(exId, 3);
+    const rowDates = new Set(rows.map((r) => r.date));
+    const older = previousNotes(exId).filter((n) => !rowDates.has(n.date));
+    const ex = exercisesById[exId];
+    const unit = ex ? lbl(ex.unit) : "kg";
     const open = !!openNotes[key];
-    const shown = open ? notes.slice(0, 10) : notes.slice(0, 2);
-    const hidden = Math.min(notes.length, 10) - 2;
+    const shownOlder = open ? older.slice(0, 10) : [];
+    const hidden = Math.min(older.length, 10);
     return (
       <div style={{ marginTop: 10, borderLeft: "3px solid #D6E24B", background: "#22211c", borderRadius: "0 6px 6px 0", padding: "8px 10px", fontSize: 12 }}>
         <div style={{ color: "#D6E24B", fontWeight: 600, marginBottom: 4, display: "flex", justifyContent: "space-between", gap: 8 }}>
-          <span>{t("prevNotes")}</span>
+          <span>{t("historyBox")}</span>
           {title && <span style={{ color: "#9a978c", fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>}
         </div>
-        {shown.map((n, i) => (
-          <div key={i} style={{ color: "#c9c6ba", marginTop: 3 }}>
-            <span className="ga-mono" style={{ color: "#9a978c", marginRight: 6 }}>{fmtShort(n.date)}</span>{n.note}
+        {rows.length === 0 && <div style={{ color: "#9a978c" }}>{t("firstTime")}</div>}
+        {rows.map((r, i) => {
+          const vol = volumeOfEntry(r.entry);
+          const note = r.entry.note && String(r.entry.note).trim();
+          return (
+            <div key={i} style={{ marginTop: i === 0 ? 2 : 7 }}>
+              <div className="ga-mono" style={{ color: i === 0 ? "#c9c6ba" : "#9a978c" }}>
+                <span style={{ marginRight: 6 }}>{fmtShort(r.date)}</span>{fmtSets(r.entry)}
+                {vol > 0 ? <span style={{ color: "#D6E24B", whiteSpace: "nowrap" }}> · {fmtVol(vol, unit)}</span> : null}
+              </div>
+              {note && Array.isArray(r.entry.sets) && <div style={{ color: "#c9c6ba", marginTop: 1, paddingLeft: 2 }}>📝 {note}</div>}
+            </div>
+          );
+        })}
+        {shownOlder.map((n, i) => (
+          <div key={"o" + i} style={{ color: "#c9c6ba", marginTop: 4 }}>
+            <span className="ga-mono" style={{ color: "#9a978c", marginRight: 6 }}>{fmtShort(n.date)}</span>📝 {n.note}
           </div>
         ))}
         {hidden > 0 && (
-          <span style={{ color: "#7FC4E8", cursor: "pointer", marginTop: 4, display: "inline-block" }}
+          <span style={{ color: "#7FC4E8", cursor: "pointer", marginTop: 6, display: "inline-block" }}
             onClick={() => setOpenNotes((o) => ({ ...o, [key]: !open }))}>
-            {open ? t("hide") : t("showMore", { n: hidden })}
+            {open ? t("hide") : t("olderNotes", { n: hidden })}
           </span>
         )}
       </div>
@@ -1597,8 +1659,6 @@ function GymAgent() {
                         {mode === "superset" && pairEx && <span style={{ color: SS_COLOR }}> + {exName(pairEx)}</span>}
                         {mode === "drop" && <span style={{ color: DROP_COLOR, fontSize: 11, fontWeight: 600, marginLeft: 6 }}>· DROP SET</span>}
                       </div>
-                      {entry.showLast && renderLastTime(exId)}
-                      {mode === "superset" && pairEx && entry.showLast && renderLastTime(pairEx.id, exName(pairEx))}
                     </div>
                     <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                       {(
@@ -1703,6 +1763,21 @@ function GymAgent() {
                             <button className="ga-btn" style={{ padding: "4px 6px" }} onClick={() => removeSetRow(exId, i)}>🗑</button>
                           </div>
                         ))}
+                      </div>
+                      <div className="ga-mono" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", background: "#22211c", border: "1px solid #33312a", borderRadius: 8, padding: "8px 10px", margin: "4px 0 10px" }}>
+                        <span style={{ fontSize: 12, color: "#9a978c" }}>🏋️ {t("volTotal")}</span>
+                        <span style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                          <span style={{ fontSize: 16, fontWeight: 700, color: "#D6E24B" }}>
+                            {mode === "superset" && pairEx ? <span style={{ fontSize: 11, fontWeight: 400, color: "#9a978c" }}>{exName(ex)} </span> : null}
+                            {fmtVol(volumeOfToday(entry.sets, mode, "main"), unit)}
+                          </span>
+                          {mode === "superset" && pairEx && (
+                            <span style={{ fontSize: 16, fontWeight: 700, color: SS_COLOR }}>
+                              <span style={{ fontSize: 11, fontWeight: 400, color: "#9a978c" }}>{exName(pairEx)} </span>
+                              {fmtVol(volumeOfToday(entry.sets, mode, "pair"), lbl(pairEx.unit))}
+                            </span>
+                          )}
+                        </span>
                       </div>
                       <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={() => addSetRow(exId)}>{t("addSet")}</button>
                       <button className="ga-btn" style={{ fontSize: 12, padding: "5px 10px", marginLeft: 6 }} onClick={() => applyFirstToAll(exId)}>{t("applyFirst")}</button>

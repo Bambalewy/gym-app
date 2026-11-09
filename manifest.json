@@ -1,7 +1,7 @@
 {
   "id": "/GymBroDemo/",
-  "name": "BB Gym (Demo)",
-  "short_name": "BB Gym Demo",
+  "name": "Back to Back Gym",
+  "short_name": "BB Gym",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

@@ -16,6 +16,10 @@ const DRIVE_FILENAME = "davide-gym-data.json";
 const LOCAL_KEY = "davide-gym-data-v1";
 // Versione schema: consente migrazioni pulite in futuro invece di affidarsi solo al merge libreria.
 const SCHEMA_VERSION = 1;
+// Versione mostrata in Impostazioni: il numero si alza a mano quando cambiano le funzioni;
+// la data la scrive "Aggiorna app.bat" in build.js a ogni pubblicazione.
+const APP_VERSION = "2.0";
+const APP_BUILD = (typeof window !== "undefined" && window.APP_BUILD) || "";
 
 /* =========================================================
    DATI DI BASE (esercizi e storico "seed")
@@ -145,7 +149,7 @@ const I18N = {
     unitPh: "Unità di misura (es. kg, lb, kg/lato)", createReplace: "Crea e sostituisci", createAdd: "Crea e aggiungi", cancel: "Annulla",
     driveTitle: "Sincronizzazione Google Drive", signIn: "🔐 Accedi con Google",
     driveInfo: "I dati vengono salvati in una cartella riservata all'app nel tuo Google Drive, non visibile tra i tuoi file normali. Accedendo con lo stesso account da un altro dispositivo, i dati si sincronizzano automaticamente.",
-    backupTitle: "Backup manuale (paracadute extra)", exportBackup: "⬇️ Esporta backup (file)", importData: "Importa dati",
+    appVersion: "Versione app", backupTitle: "Backup manuale (paracadute extra)", exportBackup: "⬇️ Esporta backup (file)", importData: "Importa dati",
     importPh: "...oppure incolla qui il testo esportato", importWarn: "Attenzione: sostituisce tutti i dati.", importConfirm: "Conferma importazione",
     importInvalid: "Formato non valido.", importOk: "Importazione riuscita: {n} sessioni caricate.", importUnrecognized: "Testo non riconosciuto.",
     languageTitle: "Lingua", languageInfo: "Cambia menu e testi dell'app, non quello che hai scritto tu. Vale solo per questo dispositivo.",
@@ -185,7 +189,7 @@ const I18N = {
     unitPh: "Unit (e.g. kg, lb, kg/side)", createReplace: "Create and replace", createAdd: "Create and add", cancel: "Cancel",
     driveTitle: "Google Drive sync", signIn: "🔐 Sign in with Google",
     driveInfo: "Your data is saved in an app-only folder in your Google Drive, hidden from your normal files. Sign in with the same account on another device and your data syncs automatically.",
-    backupTitle: "Manual backup (extra safety net)", exportBackup: "⬇️ Export backup (file)", importData: "Import data",
+    appVersion: "App version", backupTitle: "Manual backup (extra safety net)", exportBackup: "⬇️ Export backup (file)", importData: "Import data",
     importPh: "...or paste the exported text here", importWarn: "Warning: this replaces all data.", importConfirm: "Confirm import",
     importInvalid: "Invalid format.", importOk: "Import successful: {n} sessions loaded.", importUnrecognized: "Text not recognized.",
     languageTitle: "Language", languageInfo: "Changes the app's menus and labels, not what you wrote. Applies to this device only.",
@@ -1948,6 +1952,11 @@ function GymAgent() {
                   <button className="ga-btn" onClick={() => setConfirmReset(false)}>{t("cancel")}</button>
                 </div>
               )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, borderTop: "1px solid #2a2a26", paddingTop: 12, fontSize: 13 }}>
+              <span style={{ color: "#9a978c" }}>{t("appVersion")}</span>
+              <span><b>{APP_VERSION}</b>{APP_BUILD ? <span style={{ color: "#9a978c" }}> · {APP_BUILD}</span> : null}</span>
             </div>
           </div>
         )}

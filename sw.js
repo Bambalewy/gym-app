@@ -1,11 +1,12 @@
 // Back to Back Gym — service worker: l'app parte anche senza rete.
-// index.html e app.js: prima la rete (così gli aggiornamenti arrivano subito), poi la copia salvata.
+// index.html, app.js e build.js: prima la rete (così gli aggiornamenti arrivano subito), poi la copia salvata.
 // Icone e React: copia salvata (non cambiano mai).
-const CACHE_NAME = "bb-gym-cache-v3";
+const CACHE_NAME = "bb-gym-cache-v4";
 const ASSETS = [
   "./",
   "./index.html",
   "./app.js",
+  "./build.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
@@ -38,7 +39,7 @@ self.addEventListener("fetch", (event) => {
   }
 
   const path = new URL(url).pathname;
-  const networkFirst = event.request.mode === "navigate" || path.endsWith("/") || path.endsWith("/index.html") || path.endsWith("/app.js");
+  const networkFirst = event.request.mode === "navigate" || path.endsWith("/") || path.endsWith("/index.html") || path.endsWith("/app.js") || path.endsWith("/build.js");
 
   if (networkFirst) {
     event.respondWith(

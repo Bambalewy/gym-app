@@ -125,7 +125,8 @@ const I18N = {
     syncOffline: "non collegato a Google", syncSyncing: "sincronizzazione...", syncSynced: "sincronizzato con Drive", syncError: "errore di sincronizzazione",
     syncNoticeOverwritten: "Su Drive c'erano dati piu recenti: questo dispositivo e stato aggiornato. Eventuali modifiche fatte offline qui potrebbero essere state sostituite.",
     workoutDate: "Data allenamento", addExercise: "➕ Aggiungi esercizio", noExercises: "Nessun esercizio selezionato.",
-    replaceTitle: "Sostituisci esercizio", replaceHint: "Scegli il nuovo esercizio: resta in questa posizione e i valori già inseriti vengono mantenuti.",
+    replaceTitle: "Sostituisci esercizio", replaceHint: "Scegli il nuovo esercizio: resta in questa posizione e prende pesi e reps della sua ultima sessione.",
+    groupVol: "Volume per gruppo", groupVolToday: "oggi", moveUp: "Sposta su", moveDown: "Sposta giù",
     cancelReplace: "Annulla sostituzione",
     weightCol: "Peso ({u})", weightShort: "Peso", repsCol: "Reps", dropWeightCol: "↓ Drop",
     addSet: "+ serie", applyFirst: "📋 Applica 1ª serie a tutte",
@@ -165,7 +166,8 @@ const I18N = {
     syncOffline: "not connected to Google", syncSyncing: "syncing...", syncSynced: "synced with Drive", syncError: "sync error",
     syncNoticeOverwritten: "Drive had newer data: this device has been updated. Any changes made offline here may have been replaced.",
     workoutDate: "Workout date", addExercise: "➕ Add exercise", noExercises: "No exercises selected.",
-    replaceTitle: "Replace exercise", replaceHint: "Pick the new exercise: it keeps this position and the values already entered.",
+    replaceTitle: "Replace exercise", replaceHint: "Pick the new exercise: it keeps this position and loads weights and reps from its last session.",
+    groupVol: "Volume by muscle group", groupVolToday: "today", moveUp: "Move up", moveDown: "Move down",
     cancelReplace: "Cancel replace",
     weightCol: "Weight ({u})", weightShort: "Weight", repsCol: "Reps", dropWeightCol: "↓ Drop",
     addSet: "+ set", applyFirst: "📋 Apply set 1 to all",
@@ -1048,7 +1050,7 @@ function GymAgent() {
   }
 
   // Sostituisce un esercizio MANTENENDO la sua posizione nella sequenza di oggi.
-  // I valori già inseriti (peso/reps/nota) vengono conservati; compare "Ultima volta" del nuovo esercizio.
+  // Pesi e reps vengono presi dall'ultima sessione del nuovo esercizio; la nota già scritta resta.
   function replaceExerciseInToday(oldId, newEx) {
     setToday((t0) => {
       if (!t0[oldId]) return t0;
@@ -1058,12 +1060,18 @@ function GymAgent() {
       const oldEx = exercisesById[oldId];
       let newEntry;
       if (newEx.type === "weight") {
-        const kept = oldEx && oldEx.type === "weight" && Array.isArray(oldEntry.sets) && oldEntry.sets.length ? oldEntry.sets : null;
-        newEntry = kept
-          ? { sets: kept.map((s) => ({ ...s })), note: oldEntry.note || "", mode: oldEntry.mode || null, pairId: oldEntry.pairId === newEx.id ? null : oldEntry.pairId || null, showLast: true }
-          : { ...newCardFor(newEx), note: oldEntry.note || "" };
+        // Pesi e reps: quelli dell'ultima sessione del NUOVO esercizio (non quelli dell'esercizio sostituito).
+        // Se è la prima volta, serie vuote (stesso numero di serie dell'esercizio sostituito).
+        newEntry = { ...newCardFor(newEx), note: oldEntry.note || "" };
+        if (!lastEntryOf(newEx.id) && oldEx && oldEx.type === "weight" && Array.isArray(oldEntry.sets) && oldEntry.sets.length) {
+          newEntry.sets = oldEntry.sets.map(() => ({ weight: "", reps: "", weight2: "", reps2: "" }));
+        }
+        // superset ereditato dallo storico con un esercizio già presente oggi: torna serie normale
+        if (newEntry.mode === "superset" && newEntry.pairId && (newEntry.pairId === oldId ? false : !!t0[newEntry.pairId] || usedToday.has(newEntry.pairId))) {
+          newEntry = { ...newEntry, mode: null, pairId: null, sets: newEntry.sets.map((x) => ({ ...x, weight2: "", reps2: "" })) };
+        }
       } else {
-        newEntry = { note: oldEntry.note || "", showLast: true };
+        newEntry = { ...newCardFor(newEx), note: oldEntry.note || "" };
       }
       // Ricostruisco l'oggetto preservando l'ordine delle chiavi: la card resta al suo posto.
       const next = {};
@@ -1094,6 +1102,45 @@ function GymAgent() {
     setNewExType("weight");
     setNewExUnit("kg");
     setNewExOpen(false);
+  }
+
+  // Sposta una card su/giù nella sequenza di oggi (l'ordine è quello delle chiavi di `today`).
+  function moveExerciseInToday(id, dir) {
+    setToday((t0) => {
+      const keys = Object.keys(t0);
+      const i = keys.indexOf(id), j = i + dir;
+      if (i < 0 || j < 0 || j >= keys.length) return t0;
+      [keys[i], keys[j]] = [keys[j], keys[i]];
+      const next = {};
+      keys.forEach((k) => { next[k] = t0[k]; });
+      return next;
+    });
+  }
+
+  // Volume per gruppo muscolare: oggi (in tempo reale) + le 2 sessioni precedenti in cui il gruppo è stato allenato.
+  function groupVolumeRows() {
+    const todayVol = {};
+    const add = (ex, v) => { if (ex && ex.type === "weight") todayVol[ex.category] = (todayVol[ex.category] || 0) + v; };
+    Object.keys(today).forEach((exId) => {
+      const ex = exercisesById[exId], entry = today[exId];
+      if (!ex || !entry || ex.type !== "weight") return;
+      const mode = entry.mode || null;
+      add(ex, volumeOfToday(entry.sets, mode, "main"));
+      if (mode === "superset" && entry.pairId) add(exercisesById[entry.pairId], volumeOfToday(entry.sets, mode, "pair"));
+    });
+    return CATEGORIES.filter((c) => c in todayVol).map((cat) => {
+      const prev = [];
+      for (const s of pastSessions) {
+        let v = 0;
+        s.entries.forEach((e) => {
+          const ex = exercisesById[e.exerciseId];
+          if (ex && ex.type === "weight" && ex.category === cat) v += volumeOfEntry(e);
+        });
+        if (v > 0) prev.push({ date: s.date, vol: v });
+        if (prev.length >= 2) break;
+      }
+      return { cat, vol: todayVol[cat], prev };
+    });
   }
 
   function removeExerciseFromToday(id) {
@@ -1505,7 +1552,35 @@ function GymAgent() {
               <div style={{ color: "#9a978c", fontSize: 14, padding: "20px 0" }}>{t("noExercises")}</div>
             )}
 
-            {Object.keys(today).map((exId) => {
+            {(() => {
+              const rows = groupVolumeRows();
+              if (rows.length === 0) return null;
+              return (
+                <div className="ga-mono" style={{ position: "sticky", top: 0, zIndex: 5, background: "#121210", margin: "0 -8px 12px", padding: "6px 8px" }}>
+                  <div style={{ background: "#22211c", border: "1px solid #D6E24B", borderRadius: 8, padding: "7px 10px" }}>
+                    <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", color: "#9a978c", marginBottom: 2 }}>🏋️ {t("groupVol")}</div>
+                    {rows.map((r) => {
+                      const last = r.prev[0];
+                      const diff = last ? r.vol - last.vol : null;
+                      return (
+                        <div key={r.cat} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "2px 0" }}>
+                          <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>
+                            <span style={{ color: "#EDEAE0", fontFamily: "system-ui, sans-serif", fontWeight: 600 }}>{catName(r.cat)} </span>
+                            <span style={{ color: "#D6E24B", fontWeight: 700 }}>{fmtVol(r.vol, "kg")}</span>
+                            {diff != null && Math.abs(diff) >= 0.5 && r.vol > 0 ? <span style={{ fontSize: 10, color: diff > 0 ? "#8FD694" : "#E8A27F" }}> {diff > 0 ? "+" : "−"}{fmtVol(Math.abs(diff), "kg").replace(" kg", "")}</span> : null}
+                          </span>
+                          <span style={{ fontSize: 10, color: "#9a978c", textAlign: "right" }}>
+                            {r.prev.length === 0 ? "—" : r.prev.map((x, i) => <span key={i} style={{ marginLeft: i ? 8 : 0, whiteSpace: "nowrap" }}>{fmtShort(x.date)}: <span style={{ color: "#c9c6ba" }}>{fmtVol(x.vol, "kg").replace(" kg", "")}</span></span>)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {Object.keys(today).map((exId, exIdx, exIds) => {
               const ex = exercisesById[exId];
               const entry = today[exId];
               if (!ex) return null;
@@ -1520,6 +1595,17 @@ function GymAgent() {
                 <div key={exId} style={{ background: "#1c1c19", border: "1px solid #26241f", borderRadius: 10, padding: 14, marginBottom: 12 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     <div style={{ minWidth: 0 }}>
+                      {exIds.length > 1 && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                          <span className="ga-mono" style={{ fontSize: 11, color: "#9a978c", minWidth: 16 }}>{exIdx + 1}°</span>
+                          <button className="ga-btn" title={t("moveUp")} aria-label={t("moveUp")} disabled={exIdx === 0}
+                            style={{ padding: "3px 10px", fontSize: 12, opacity: exIdx === 0 ? 0.3 : 1 }}
+                            onClick={() => moveExerciseInToday(exId, -1)}>▲</button>
+                          <button className="ga-btn" title={t("moveDown")} aria-label={t("moveDown")} disabled={exIdx === exIds.length - 1}
+                            style={{ padding: "3px 10px", fontSize: 12, opacity: exIdx === exIds.length - 1 ? 0.3 : 1 }}
+                            onClick={() => moveExerciseInToday(exId, 1)}>▼</button>
+                        </div>
+                      )}
                       <div style={{ fontWeight: 600, fontSize: 15 }}>
                         {exName(ex)}
                         {mode === "superset" && pairEx && <span style={{ color: SS_COLOR }}> + {exName(pairEx)}</span>}
